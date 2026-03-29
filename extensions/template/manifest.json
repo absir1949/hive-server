@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "__Hive_Bridge__",
+  "version": "1.0.0",
+  "description": "Fingerprint isolation + WebSocket communication for Hive Browser",
+  "permissions": [
+    "tabs",
+    "storage",
+    "webRequest",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "ws://127.0.0.1:*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["fingerprint-injector.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["fingerprint-loader.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}

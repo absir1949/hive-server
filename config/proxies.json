@@ -1,0 +1,40 @@
+{
+  "proxies": [
+    {
+      "id": "proxy_001",
+      "name": "HTTP代理示例1",
+      "type": "http",
+      "host": "proxy1.example.com",
+      "port": 8080,
+      "username": "",
+      "password": "",
+      "failover": [],
+      "isActive": true,
+      "notes": "HTTP代理示例，请替换为实际代理地址"
+    },
+    {
+      "id": "proxy_002",
+      "name": "SOCKS5代理示例1",
+      "type": "socks5",
+      "host": "socks1.example.com",
+      "port": 1080,
+      "username": "",
+      "password": "",
+      "failover": ["proxy_003"],
+      "isActive": true,
+      "notes": "SOCKS5代理示例，请替换为实际代理地址"
+    },
+    {
+      "id": "proxy_003",
+      "name": "备用代理示例",
+      "type": "http",
+      "host": "backup.example.com",
+      "port": 8080,
+      "username": "",
+      "password": "",
+      "failover": [],
+      "isActive": true,
+      "notes": "作为proxy_002的备用代理"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+services:
+  hive-server:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      # Docker socket — server creates Chrome containers via Docker API
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Data directory — shared between server and Chrome containers
+      - ${DATA_DIR:-./data}:/app/data
+    environment:
+      - PORT=3000
+      - IDLE_TIMEOUT_MS=${IDLE_TIMEOUT_MS:-600000}
+      # HOST_DATA_DIR tells containerManager to use host paths for Docker volume mounts.
+      # Must match the left side of the data volume mount above.
+      - HOST_DATA_DIR=${DATA_DIR:-/opt/hive/data}
+    restart: unless-stopped
+    depends_on:
+      hive-chrome-build:
+        condition: service_completed_successfully
+
+  # Build-only service: ensures hive-chrome image exists before server starts.
+  # Does not run a container — exits immediately after build.
+  hive-chrome-build:
+    build:
+      context: ./docker
+    image: hive-chrome
+    command: ["echo", "image built"]

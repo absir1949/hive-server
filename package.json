@@ -1,0 +1,14 @@
+{
+  "name": "hive-server",
+  "version": "0.1.0",
+  "description": "Browser session pool server — manage isolated Chrome instances in Docker containers",
+  "main": "server.js",
+  "scripts": {
+    "server": "node server.js"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.0",
+    "express": "^4.21.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
