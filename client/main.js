@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -7,6 +7,9 @@ const SERVER = config.serverUrl;
 
 let tray = null;
 let quickPickerWindow = null;
+
+// profileId → BrowserWindow (VNC windows)
+const vncWindows = new Map();
 
 // --- Server API helpers ---
 
@@ -30,16 +33,96 @@ async function getBrowsers() {
   return ok ? browsers : [];
 }
 
+// --- VNC window management ---
+
+function getVncUrl(profileId) {
+  const serverHost = new URL(SERVER).hostname;
+  return api('GET', `/browsers/${profileId}/vnc`).then(({ ok, url }) => {
+    if (!ok || !url) return null;
+    return url.replace(/\/\/[^:\/]+/, `//${serverHost}`);
+  });
+}
+
+async function waitForVnc(url, timeoutMs = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Check both HTTP (page loads) and that websockify is proxying
+      const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+      if (res.ok) return true;
+    } catch (e) { /* retry */ }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
+}
+
+async function openVnc(profileId, profileName) {
+  // Already open — bring to front
+  const existing = vncWindows.get(String(profileId));
+  if (existing && !existing.isDestroyed()) {
+    existing.show();
+    existing.focus();
+    return;
+  }
+
+  const vncUrl = await getVncUrl(profileId);
+  if (!vncUrl) return;
+
+  // Wait for VNC to be ready before opening window
+  await waitForVnc(vncUrl);
+
+  const title = profileName || `Profile ${profileId}`;
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    title,
+    webPreferences: {
+      contextIsolation: true,
+    },
+  });
+
+  win.loadURL(vncUrl);
+
+  // Page <title> overrides window title — force it back after load
+  win.webContents.on('page-title-updated', (e) => {
+    e.preventDefault();
+    win.setTitle(title);
+  });
+
+  vncWindows.set(String(profileId), win);
+
+  win.on('closed', () => {
+    vncWindows.delete(String(profileId));
+    updateTrayMenu();
+  });
+}
+
+async function startAndOpenVnc(profile) {
+  try {
+    // Already open — bring to front
+    const existing = vncWindows.get(String(profile.id));
+    if (existing && !existing.isDestroyed()) {
+      existing.show();
+      existing.focus();
+      return;
+    }
+
+    await api('POST', `/browsers/${profile.id}/navigate`, { url: profile.url });
+    await openVnc(profile.id, profile.name);
+    updateTrayMenu();
+  } catch (e) {
+    console.error('[Client] Failed to start profile:', e.message);
+  }
+}
+
 // --- Tray ---
 
 function createTray() {
-  // Use a simple template icon (macOS will auto-handle dark/light mode)
   const iconPath = path.join(__dirname, 'IconTemplate.png');
   let icon;
   if (fs.existsSync(iconPath)) {
     icon = nativeImage.createFromPath(iconPath);
   } else {
-    // Fallback: create a simple 16x16 icon
     icon = nativeImage.createEmpty();
   }
 
@@ -74,9 +157,10 @@ async function updateTrayMenu() {
   if (running.length > 0) {
     menuTemplate.push({ label: '运行中', enabled: false });
     for (const p of running) {
+      const hasWindow = vncWindows.has(String(p.id)) && !vncWindows.get(String(p.id)).isDestroyed();
       menuTemplate.push({
-        label: `  🟢 ${p.name}`,
-        click: () => openVnc(p.id),
+        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}`,
+        click: () => openVnc(p.id, p.name),
       });
     }
     menuTemplate.push({ type: 'separator' });
@@ -107,32 +191,6 @@ async function updateTrayMenu() {
   );
 
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate));
-}
-
-// --- Actions ---
-
-async function openVnc(profileId) {
-  try {
-    const { ok, url } = await api('GET', `/browsers/${profileId}/vnc`);
-    if (ok && url) {
-      // Replace hostname with server's hostname (vnc URL uses request hostname)
-      const serverHost = new URL(SERVER).hostname;
-      const vncUrl = url.replace(/\/\/[^:\/]+/, `//${serverHost}`);
-      shell.openExternal(vncUrl);
-    }
-  } catch (e) {
-    console.error('[Client] Failed to open VNC:', e.message);
-  }
-}
-
-async function startAndOpenVnc(profile) {
-  try {
-    await api('POST', `/browsers/${profile.id}/navigate`, { url: profile.url });
-    await openVnc(profile.id);
-    updateTrayMenu();
-  } catch (e) {
-    console.error('[Client] Failed to start profile:', e.message);
-  }
 }
 
 // --- Dialogs ---
