@@ -1,12 +1,45 @@
 #!/bin/bash
 set -e
 
-# --- Xvfb ---
-Xvfb :99 -screen 0 1920x1080x24 -ac &
-sleep 1
-
 # Clean stale Chrome lock files (left behind when container is killed)
 rm -f /data/SingletonLock /data/SingletonSocket /data/SingletonCookie
+
+# --- KasmVNC (replaces Xvfb + x11vnc + noVNC) ---
+# Use Xvnc directly (skip the interactive Perl wrapper)
+#   - Built-in X server (no Xvfb needed)
+#   - Built-in web client on websocketPort
+#   - Native clipboard, dynamic resize, WebP encoding
+Xvnc :1 \
+  -geometry 1920x1080 -depth 24 \
+  -websocketPort 6080 \
+  -interface 0.0.0.0 \
+  -SecurityTypes None \
+  -disableBasicAuth \
+  -sslOnly 0 \
+  -AcceptCutText 1 \
+  -SendCutText 1 \
+  -httpd /usr/share/kasmvnc/www \
+  &
+sleep 2
+
+export DISPLAY=:1
+
+# --- Openbox (window manager) ---
+# Configure to maximize all windows automatically
+mkdir -p /root/.config/openbox
+cat > /root/.config/openbox/rc.xml << 'OBXML'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <maximized>yes</maximized>
+      <decor>no</decor>
+    </application>
+  </applications>
+</openbox_config>
+OBXML
+openbox &
+sleep 1
 
 # --- Chrome ---
 CHROME_FLAGS=(
@@ -15,6 +48,8 @@ CHROME_FLAGS=(
   --disable-gpu
   --no-first-run
   --no-default-browser-check
+  --start-maximized
+  --window-size=1920,1080
   --disable-background-networking
   --disable-sync
   --remote-debugging-port=9223
@@ -51,14 +86,7 @@ sleep 2
 # --- socat: expose CDP to 0.0.0.0 (Chrome ignores --remote-debugging-address) ---
 socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
 
-# --- x11vnc ---
-x11vnc -display :99 -forever -nopw -rfbport 5900 -q &
-sleep 1
-
-# --- noVNC (websockify) ---
-websockify --web /usr/share/novnc 6080 localhost:5900 &
-
-echo "Hive Chrome ready — CDP :9222, noVNC :6080"
+echo "Hive Chrome ready — CDP :9222, KasmVNC :6080"
 
 # Keep container alive — wait for any child to exit
 wait -n

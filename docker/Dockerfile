@@ -1,43 +1,29 @@
 FROM debian:bookworm-slim
 
-# Avoid interactive prompts during install
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Chromium, Xvfb, x11vnc, noVNC, websockify
+# Layer 1: Heavy packages (rarely change, cached)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    xvfb \
-    x11vnc \
-    novnc \
-    websockify \
-    # Fonts for Chinese content
     fonts-noto-cjk \
-    # socat: forward 0.0.0.0:9222 → 127.0.0.1:9222 (Chrome ignores --remote-debugging-address)
-    socat \
-    # xclip: clipboard sharing between x11vnc and Chrome
-    xclip \
-    # Clean up
+    wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# noVNC index redirect — auto-connect with scaling
-RUN echo '<html><head><meta http-equiv="refresh" content="0;url=vnc_lite.html?resize=scale&autoconnect=true"></head></html>' \
-    > /usr/share/novnc/index.html
+# Layer 2: KasmVNC (pinned version, cached)
+RUN KASMVNC_VER=1.4.0 && \
+    ARCH=$(dpkg --print-architecture) && \
+    wget -q "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VER}/kasmvncserver_bookworm_${KASMVNC_VER}_${ARCH}.deb" -O /tmp/kasmvnc.deb && \
+    apt-get update && apt-get install -y --fix-broken /tmp/kasmvnc.deb && \
+    rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*
 
-# Fixed ports inside container
-#   9222 — Chrome DevTools Protocol (CDP)
-#   6080 — noVNC web access
+# Layer 3: Small tools (add new packages here to avoid rebuilding layer 1 & 2)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    socat \
+    openbox \
+    && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 9222 6080
-
-# user-data-dir mount point
 VOLUME /data
-
-# Environment variables for Chrome configuration (all optional)
-#   CHROME_PROXY        — proxy server, e.g. http://user:pass@host:port
-#   CHROME_USER_AGENT   — user agent string override
-#   CHROME_EXTENSION    — path to unpacked extension directory
-#   CHROME_URL          — URL to open on startup
-#   CHROME_EXTRA_FLAGS  — additional Chrome flags
-ENV DISPLAY=:99
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
