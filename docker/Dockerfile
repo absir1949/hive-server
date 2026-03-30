@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11vnc \
     websockify \
     openbox \
+    xdotool \
     xclip \
     socat \
     wget ca-certificates \

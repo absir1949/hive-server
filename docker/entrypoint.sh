@@ -10,8 +10,21 @@ sleep 1
 
 export DISPLAY=:1
 
-# --- Openbox (window manager — Chrome needs it to maximize properly) ---
-openbox &
+# --- Openbox (window manager) ---
+# Configure to auto-maximize all windows without decorations
+mkdir -p /root/.config/openbox
+cat > /root/.config/openbox/rc.xml << 'OBXML'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <maximized>yes</maximized>
+      <decor>no</decor>
+    </application>
+  </applications>
+</openbox_config>
+OBXML
+openbox --config-file /root/.config/openbox/rc.xml &
 sleep 1
 
 # --- Chrome ---
@@ -21,8 +34,8 @@ CHROME_FLAGS=(
   --disable-gpu
   --no-first-run
   --no-default-browser-check
-  --start-maximized
-  --force-device-scale-factor=1
+  --window-position=0,0
+  --window-size=1920,1080
   --disable-background-networking
   --disable-sync
   --remote-debugging-port=9223
