@@ -46,6 +46,10 @@
       <label for="url">首页 URL</label>
       <input type="text" id="url" placeholder="https://example.com">
     </div>
+    <div class="field">
+      <label for="keepAlive">保活间隔（秒，0 = 不保活）</label>
+      <input type="number" id="keepAlive" value="3600" min="0" step="60">
+    </div>
     <div class="buttons">
       <button class="btn-cancel" onclick="window.close()">取消</button>
       <button class="btn-primary" onclick="submit()">添加</button>
@@ -71,9 +75,10 @@
       const name = document.getElementById('name').value.trim();
       const type = document.getElementById('type').value;
       const url = document.getElementById('url').value.trim();
+      const keepAlive = parseInt(document.getElementById('keepAlive').value) || 0;
       if (!name) return document.getElementById('name').focus();
       if (!url) return document.getElementById('url').focus();
-      await window.electronAPI.addProfile(name, url, type);
+      await window.electronAPI.addProfile(name, url, type, keepAlive);
       window.close();
     }
     document.querySelectorAll('input').forEach(el => {

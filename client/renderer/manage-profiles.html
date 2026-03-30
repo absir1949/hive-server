@@ -80,8 +80,10 @@
             <div class="profile-info">
               <input id="en-${p.id}" value="${esc(p.name)}" placeholder="名称">
               <select id="et-${p.id}">${typeOptions(p.type)}</select>
-              <input id="eu-${p.id}" value="${esc(p.url||'')}" placeholder="URL"
-                onkeypress="if(event.key==='Enter')save(${p.id})" onkeydown="if(event.key==='Escape'){editingId=null;render()}">
+              <input id="eu-${p.id}" value="${esc(p.url||'')}" placeholder="URL">
+              <input id="ek-${p.id}" type="number" value="${p.keepAliveInterval||0}" min="0" step="60" placeholder="保活间隔（秒）"
+                onkeypress="if(event.key==='Enter')save(${p.id})" onkeydown="if(event.key==='Escape'){editingId=null;render()}"
+                style="width:50%;display:inline-block"><span style="font-size:11px;color:#86868b;margin-left:4px">秒 (0=不保活)</span>
             </div>
             <div class="profile-actions">
               <button class="btn-icon save" onclick="save(${p.id})">&#10003;</button>
@@ -92,7 +94,7 @@
           <div class="profile-item">
             <div class="profile-info">
               <div class="profile-name">${esc(p.name)}</div>
-              <div class="profile-meta"><span class="type-tag">${typeLabels[p.type] || p.type || '通用'}</span>${esc(p.url||'未设置')}</div>
+              <div class="profile-meta"><span class="type-tag">${typeLabels[p.type] || p.type || '通用'}</span>${p.keepAliveInterval ? `<span class="type-tag">保活 ${p.keepAliveInterval}s</span>` : ''}${esc(p.url||'未设置')}</div>
             </div>
             <div class="profile-actions">
               <button class="btn-icon" onclick="editingId=${p.id};render()">&#9998;</button>
@@ -111,8 +113,9 @@
       const name = document.getElementById(`en-${id}`).value.trim();
       const type = document.getElementById(`et-${id}`).value;
       const url = document.getElementById(`eu-${id}`).value.trim();
+      const keepAliveInterval = parseInt(document.getElementById(`ek-${id}`).value) || 0;
       if (!name || !url) return;
-      await window.electronAPI.updateProfile(id, { name, type, url });
+      await window.electronAPI.updateProfile(id, { name, type, url, keepAliveInterval });
       editingId = null;
       await load();
     }

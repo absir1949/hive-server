@@ -200,7 +200,7 @@ async function updateTrayMenu() {
 function showAddProfileDialog() {
   const win = new BrowserWindow({
     width: 360,
-    height: 240,
+    height: 290,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -303,8 +303,8 @@ ipcMain.handle('server:setUrl', async (_, newUrl) => {
   return { ok: true, restart: true };
 });
 
-ipcMain.handle('profile:add', async (_, name, url, type) => {
-  const res = await api('POST', '/profiles', { name, url, type: type || 'generic' });
+ipcMain.handle('profile:add', async (_, name, url, type, keepAlive) => {
+  const res = await api('POST', '/profiles', { name, url, type: type || 'generic', keepAliveInterval: keepAlive || 3600 });
   updateTrayMenu();
   return res;
 });
