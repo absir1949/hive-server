@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>管理配置</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 16px; padding-top: 40px;
+      background: #f5f5f7;
+      -webkit-app-region: drag;
+    }
+    .content { -webkit-app-region: no-drag; }
+    h2 { font-size: 15px; font-weight: 600; color: #1d1d1f; margin-bottom: 12px; }
+    .profile-list { max-height: 260px; overflow-y: auto; }
+    .profile-item {
+      display: flex; align-items: center; padding: 10px 12px;
+      background: #fff; border-radius: 8px; margin-bottom: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .profile-info { flex: 1; min-width: 0; }
+    .profile-name { font-size: 14px; color: #1d1d1f; }
+    .profile-url { font-size: 11px; color: #86868b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .profile-info input {
+      width: 100%; padding: 4px 8px; font-size: 13px;
+      border: 1px solid #0071e3; border-radius: 4px; outline: none; margin-bottom: 4px;
+    }
+    .profile-actions { display: flex; gap: 6px; }
+    .btn-icon {
+      width: 28px; height: 28px; border: none; border-radius: 6px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      background: #e8e8ed; color: #86868b; font-size: 14px;
+    }
+    .btn-icon:hover { background: #d1d1d6; color: #1d1d1f; }
+    .btn-icon.delete:hover { background: #ff3b30; color: white; }
+    .btn-icon.save { background: #34c759; color: white; }
+    .btn-icon.save:hover { background: #2db84d; }
+    .empty { text-align: center; padding: 40px 20px; color: #86868b; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <h2>管理配置</h2>
+    <div class="profile-list" id="list"></div>
+  </div>
+  <script>
+    let profiles = [];
+    let editingId = null;
+
+    async function load() {
+      profiles = await window.electronAPI.getAllProfiles();
+      render();
+    }
+
+    function esc(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    function render() {
+      const el = document.getElementById('list');
+      if (profiles.length === 0) { el.innerHTML = '<div class="empty">暂无配置</div>'; return; }
+
+      el.innerHTML = profiles.map(p => {
+        if (editingId === p.id) return `
+          <div class="profile-item">
+            <div class="profile-info">
+              <input id="en-${p.id}" value="${esc(p.name)}" placeholder="名称">
+              <input id="eu-${p.id}" value="${esc(p.url||'')}" placeholder="URL"
+                onkeypress="if(event.key==='Enter')save(${p.id})" onkeydown="if(event.key==='Escape'){editingId=null;render()}">
+            </div>
+            <div class="profile-actions">
+              <button class="btn-icon save" onclick="save(${p.id})">&#10003;</button>
+              <button class="btn-icon" onclick="editingId=null;render()">&#10005;</button>
+            </div>
+          </div>`;
+        return `
+          <div class="profile-item">
+            <div class="profile-info">
+              <div class="profile-name">${esc(p.name)}</div>
+              <div class="profile-url">${esc(p.url||'未设置')}</div>
+            </div>
+            <div class="profile-actions">
+              <button class="btn-icon" onclick="editingId=${p.id};render()">&#9998;</button>
+              <button class="btn-icon delete" onclick="del(${p.id},'${esc(p.name)}')">&#128465;</button>
+            </div>
+          </div>`;
+      }).join('');
+
+      if (editingId) {
+        const inp = document.getElementById(`en-${editingId}`);
+        if (inp) { inp.focus(); inp.select(); }
+      }
+    }
+
+    async function save(id) {
+      const name = document.getElementById(`en-${id}`).value.trim();
+      const url = document.getElementById(`eu-${id}`).value.trim();
+      if (!name || !url) return;
+      await window.electronAPI.updateProfile(id, { name, url });
+      editingId = null;
+      await load();
+    }
+
+    async function del(id, name) {
+      if (!confirm(`确定删除「${name}」？`)) return;
+      await window.electronAPI.deleteProfile(id);
+      await load();
+    }
+
+    load();
+  </script>
+</body>
+</html>

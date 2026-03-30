@@ -5,7 +5,7 @@ const BrowserConnector = require('./lib/browserConnector');
 const ProfileStore = require('./lib/profileStore');
 const FingerprintEngine = require('./lib/fingerprintEngine');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 37568;
 
 const cm = new ContainerManager();
 const bc = new BrowserConnector();

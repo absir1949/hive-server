@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>添加配置</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      padding: 16px; padding-top: 40px;
+      background: #f5f5f7;
+      -webkit-app-region: drag;
+    }
+    .content { -webkit-app-region: no-drag; }
+    .field { margin-bottom: 12px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: #86868b; }
+    input {
+      width: 100%; padding: 8px 12px; font-size: 14px;
+      border: 1px solid #d2d2d7; border-radius: 6px; background: #fff; outline: none;
+    }
+    input:focus { border-color: #0071e3; box-shadow: 0 0 0 2px rgba(0,113,227,0.2); }
+    .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    button { padding: 6px 14px; font-size: 13px; border-radius: 6px; cursor: pointer; }
+    .btn-primary { background: #0071e3; color: white; border: none; }
+    .btn-primary:hover { background: #0077ed; }
+    .btn-cancel { background: #fff; color: #1d1d1f; border: 1px solid #d2d2d7; }
+    .btn-cancel:hover { background: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="field">
+      <label for="name">名称</label>
+      <input type="text" id="name" placeholder="例如：旗舰店" autofocus>
+    </div>
+    <div class="field">
+      <label for="url">首页 URL</label>
+      <input type="text" id="url" placeholder="https://example.com">
+    </div>
+    <div class="buttons">
+      <button class="btn-cancel" onclick="window.close()">取消</button>
+      <button class="btn-primary" onclick="submit()">添加</button>
+    </div>
+  </div>
+  <script>
+    async function submit() {
+      const name = document.getElementById('name').value.trim();
+      const url = document.getElementById('url').value.trim();
+      if (!name) return document.getElementById('name').focus();
+      if (!url) return document.getElementById('url').focus();
+      await window.electronAPI.addProfile(name, url);
+      window.close();
+    }
+    document.querySelectorAll('input').forEach(el => {
+      el.addEventListener('keypress', e => { if (e.key === 'Enter') submit(); });
+    });
+  </script>
+</body>
+</html>
