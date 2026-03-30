@@ -187,6 +187,8 @@ async function updateTrayMenu() {
     { label: '添加配置...', click: showAddProfileDialog },
     { label: '管理配置...', click: showManageProfilesDialog },
     { type: 'separator' },
+    { label: `服务器设置... (${new URL(SERVER).host})`, click: showServerSettingsDialog },
+    { type: 'separator' },
     { label: '退出', click: () => app.quit() },
   );
 
@@ -210,6 +212,24 @@ function showAddProfileDialog() {
     },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'add-profile.html'));
+  win.on('closed', () => updateTrayMenu());
+}
+
+function showServerSettingsDialog() {
+  const win = new BrowserWindow({
+    width: 400,
+    height: 160,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 12, y: 12 },
+    webPreferences: {
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+  });
+  win.loadFile(path.join(__dirname, 'renderer', 'server-settings.html'));
   win.on('closed', () => updateTrayMenu());
 }
 
@@ -269,6 +289,19 @@ function showQuickPicker() {
 }
 
 // --- IPC handlers (renderer ↔ main) ---
+
+ipcMain.handle('server:getUrl', async () => {
+  return SERVER;
+});
+
+ipcMain.handle('server:setUrl', async (_, newUrl) => {
+  const configPath = path.join(__dirname, 'config.json');
+  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  cfg.serverUrl = newUrl;
+  fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+  // Note: requires restart to take effect (SERVER is read at startup)
+  return { ok: true, restart: true };
+});
 
 ipcMain.handle('profile:add', async (_, name, url) => {
   const res = await api('POST', '/profiles', { name, url });
