@@ -21,8 +21,12 @@
     }
     .profile-info { flex: 1; min-width: 0; }
     .profile-name { font-size: 14px; color: #1d1d1f; }
-    .profile-url { font-size: 11px; color: #86868b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .profile-info input {
+    .profile-meta { font-size: 11px; color: #86868b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .type-tag {
+      display: inline-block; font-size: 10px; padding: 1px 6px;
+      border-radius: 4px; background: #e8e8ed; color: #636366; margin-right: 4px;
+    }
+    .profile-info input, .profile-info select {
       width: 100%; padding: 4px 8px; font-size: 13px;
       border: 1px solid #0071e3; border-radius: 4px; outline: none; margin-bottom: 4px;
     }
@@ -45,6 +49,7 @@
     <div class="profile-list" id="list"></div>
   </div>
   <script>
+    const typeLabels = { wechat_shop: '微信小店', kuaishou_shop: '快手小店', generic: '通用' };
     let profiles = [];
     let editingId = null;
 
@@ -59,6 +64,12 @@
       return d.innerHTML;
     }
 
+    function typeOptions(selected) {
+      return Object.entries(typeLabels).map(([v, l]) =>
+        `<option value="${v}" ${v === selected ? 'selected' : ''}>${l}</option>`
+      ).join('');
+    }
+
     function render() {
       const el = document.getElementById('list');
       if (profiles.length === 0) { el.innerHTML = '<div class="empty">暂无配置</div>'; return; }
@@ -68,6 +79,7 @@
           <div class="profile-item">
             <div class="profile-info">
               <input id="en-${p.id}" value="${esc(p.name)}" placeholder="名称">
+              <select id="et-${p.id}">${typeOptions(p.type)}</select>
               <input id="eu-${p.id}" value="${esc(p.url||'')}" placeholder="URL"
                 onkeypress="if(event.key==='Enter')save(${p.id})" onkeydown="if(event.key==='Escape'){editingId=null;render()}">
             </div>
@@ -80,7 +92,7 @@
           <div class="profile-item">
             <div class="profile-info">
               <div class="profile-name">${esc(p.name)}</div>
-              <div class="profile-url">${esc(p.url||'未设置')}</div>
+              <div class="profile-meta"><span class="type-tag">${typeLabels[p.type] || p.type || '通用'}</span>${esc(p.url||'未设置')}</div>
             </div>
             <div class="profile-actions">
               <button class="btn-icon" onclick="editingId=${p.id};render()">&#9998;</button>
@@ -97,9 +109,10 @@
 
     async function save(id) {
       const name = document.getElementById(`en-${id}`).value.trim();
+      const type = document.getElementById(`et-${id}`).value;
       const url = document.getElementById(`eu-${id}`).value.trim();
       if (!name || !url) return;
-      await window.electronAPI.updateProfile(id, { name, url });
+      await window.electronAPI.updateProfile(id, { name, type, url });
       editingId = null;
       await load();
     }
