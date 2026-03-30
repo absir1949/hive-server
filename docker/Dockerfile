@@ -6,21 +6,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+# Layer 2: Display + VNC stack
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    websockify \
+    openbox \
+    xclip \
+    socat \
     wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer 2: KasmVNC (pinned version, cached)
-RUN KASMVNC_VER=1.4.0 && \
-    ARCH=$(dpkg --print-architecture) && \
-    wget -q "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VER}/kasmvncserver_bookworm_${KASMVNC_VER}_${ARCH}.deb" -O /tmp/kasmvnc.deb && \
-    apt-get update && apt-get install -y --fix-broken /tmp/kasmvnc.deb && \
-    rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*
-
-# Layer 3: Small tools (add new packages here to avoid rebuilding layer 1 & 2)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    socat \
-    openbox \
-    && rm -rf /var/lib/apt/lists/*
+# noVNC v1.6.0 (Debian ships 1.3.0 which has broken resize=scale)
+RUN wget -q https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz -O /tmp/novnc.tar.gz && \
+    mkdir -p /usr/share/novnc && \
+    tar -xzf /tmp/novnc.tar.gz -C /usr/share/novnc --strip-components=1 && \
+    rm /tmp/novnc.tar.gz && \
+    echo '<html><head><meta http-equiv="refresh" content="0;url=vnc_lite.html?scale=true&autoconnect=true"></head></html>' \
+    > /usr/share/novnc/index.html
 
 EXPOSE 9222 6080
 VOLUME /data
