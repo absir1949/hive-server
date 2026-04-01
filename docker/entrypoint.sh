@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# If a command is passed (e.g. "echo image built"), execute it directly and exit.
+# This allows the build-only service to exit immediately after image build.
+if [ $# -gt 0 ]; then
+  exec "$@"
+fi
+
 # Clean stale Chrome lock files (left behind when container is killed)
 rm -f /data/SingletonLock /data/SingletonSocket /data/SingletonCookie
 
@@ -27,6 +33,16 @@ OBXML
 openbox --config-file /root/.config/openbox/rc.xml &
 sleep 1
 
+# --- Fcitx (Chinese input method) ---
+# Start dbus (required by fcitx)
+eval $(dbus-launch --sh-syntax)
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
+# Ctrl+Space to toggle between English and Chinese pinyin
+fcitx -d &
+sleep 1
+
 # --- Chrome ---
 CHROME_FLAGS=(
   --no-sandbox
@@ -34,6 +50,7 @@ CHROME_FLAGS=(
   --disable-gpu
   --no-first-run
   --no-default-browser-check
+  --disable-infobars
   --window-position=0,0
   --window-size=1920,1080
   --disable-background-networking

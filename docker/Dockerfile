@@ -18,6 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xclip \
     socat \
     wget ca-certificates \
+    # Chinese input method
+    fcitx fcitx-pinyin fcitx-ui-classic fcitx-frontend-gtk3 fcitx-module-dbus dbus-x11 \
     && rm -rf /var/lib/apt/lists/*
 
 # noVNC v1.6.0 (Debian ships 1.3.0 which has broken resize=scale)
