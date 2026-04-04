@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openbox \
     xdotool \
     xclip \
+    autocutsel \
     socat \
     wget ca-certificates \
     # Chinese input method
@@ -27,7 +28,7 @@ RUN wget -q https://github.com/novnc/noVNC/archive/refs/tags/v1.6.0.tar.gz -O /t
     mkdir -p /usr/share/novnc && \
     tar -xzf /tmp/novnc.tar.gz -C /usr/share/novnc --strip-components=1 && \
     rm /tmp/novnc.tar.gz && \
-    echo '<html><head><meta http-equiv="refresh" content="0;url=vnc_lite.html?scale=true&autoconnect=true"></head></html>' \
+    echo '<html><head><meta http-equiv="refresh" content="0;url=vnc.html?resize=scale&autoconnect=true"></head></html>' \
     > /usr/share/novnc/index.html
 
 EXPOSE 9222 6080

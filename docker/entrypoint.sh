@@ -33,15 +33,23 @@ OBXML
 openbox --config-file /root/.config/openbox/rc.xml &
 sleep 1
 
-# --- Fcitx (Chinese input method) ---
-# Start dbus (required by fcitx)
+# --- D-Bus (required by fcitx) ---
 eval $(dbus-launch --sh-syntax)
+export DBUS_SESSION_BUS_ADDRESS
+
+# --- Fcitx (Chinese input method) ---
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
-# Ctrl+Space to toggle between English and Chinese pinyin
 fcitx -d &
 sleep 1
+
+# --- Clipboard sync ---
+# autocutsel keeps X CLIPBOARD and PRIMARY selection in sync.
+# x11vnc bridges VNC clipboard ↔ X selection, autocutsel bridges X selection ↔ X clipboard.
+# Together they enable copy-paste between noVNC and Chrome.
+autocutsel -selection CLIPBOARD &
+autocutsel -selection PRIMARY &
 
 # --- Chrome ---
 CHROME_FLAGS=(
@@ -86,6 +94,14 @@ CHROME_URL="${CHROME_URL:-about:blank}"
 chromium "${CHROME_FLAGS[@]}" "$CHROME_URL" &
 CHROME_PID=$!
 sleep 2
+
+# Force Chrome to re-layout at correct viewport size.
+# The first tab gets stuck at 800x600 because Chrome renders it before
+# openbox has time to maximize the window. Toggling the window size
+# forces Chrome to re-layout all tabs at the actual window dimensions.
+xdotool search --class chromium windowsize --sync 800 600
+sleep 0.3
+xdotool search --class chromium windowsize --sync 1920 1080
 
 # --- socat: expose CDP to 0.0.0.0 (Chrome ignores --remote-debugging-address) ---
 socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
