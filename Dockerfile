@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm install --omit=dev
+RUN npm ci --production
 
 COPY . .
 
