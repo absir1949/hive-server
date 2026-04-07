@@ -36,11 +36,11 @@ ssh "$REMOTE" "cd $REMOTE_DIR && git pull"
 echo "=== 3. Build ==="
 if [ "$REBUILD_CHROME" = true ]; then
   echo "Rebuilding hive-chrome image..."
-  ssh "$REMOTE" "cd $REMOTE_DIR && DOCKER_BUILDKIT=0 docker build -t hive-chrome ./docker" 2>&1 | tail -3
+  ssh "$REMOTE" "cd $REMOTE_DIR && docker build -t hive-chrome ./docker" 2>&1 | tail -3
 fi
 
 echo "Rebuilding hive-server image..."
-ssh "$REMOTE" "cd $REMOTE_DIR && DOCKER_BUILDKIT=0 docker compose build hive-server" 2>&1 | tail -3
+ssh "$REMOTE" "cd $REMOTE_DIR && docker compose build hive-server" 2>&1 | tail -3
 
 echo "=== 4. Restart ==="
 ssh "$REMOTE" "cd $REMOTE_DIR && docker compose down && docker compose up -d" 2>&1
