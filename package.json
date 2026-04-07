@@ -9,6 +9,7 @@
   "dependencies": {
     "dockerode": "^4.0.0",
     "express": "^4.21.0",
-    "puppeteer-core": "^24.0.0"
+    "puppeteer-core": "^24.0.0",
+    "ws": "^8.20.0"
   }
 }
