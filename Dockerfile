@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --production
+RUN npm ci --omit=dev && ls node_modules/express
 
 COPY . .
 
