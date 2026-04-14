@@ -1,6 +1,7 @@
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
 
 # Layer 1: Heavy packages (rarely change, cached)
 RUN apt-get update && apt-get install -y --no-install-recommends \
