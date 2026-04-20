@@ -68,8 +68,12 @@ async function openVnc(profileId, profileName) {
   const vncUrl = await getVncUrl(profileId);
   if (!vncUrl) return;
 
-  // Wait for VNC to be ready before opening window
-  await waitForVnc(vncUrl);
+  // Wait for VNC to be ready — don't open window if not ready
+  const ready = await waitForVnc(vncUrl);
+  if (!ready) {
+    console.error('[Client] VNC not ready for profile', profileId);
+    return;
+  }
 
   const title = profileName || `Profile ${profileId}`;
   const win = new BrowserWindow({
@@ -107,7 +111,7 @@ async function startAndOpenVnc(profile) {
       return;
     }
 
-    await api('POST', `/browsers/${profile.id}/navigate`, { url: profile.url });
+    // Just open VNC — ensureConnected inside getVncUrl handles container start
     await openVnc(profile.id, profile.name);
     updateTrayMenu();
   } catch (e) {
