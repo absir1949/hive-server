@@ -68,10 +68,16 @@ async function openVnc(profileId, profileName) {
   const vncUrl = await getVncUrl(profileId);
   if (!vncUrl) return;
 
-  // Wait for VNC to be ready — don't open window if not ready
-  const ready = await waitForVnc(vncUrl);
+  // Wait for VNC to be ready, retry up to 60s with user feedback
+  const ready = await waitForVnc(vncUrl, 60000);
   if (!ready) {
-    console.error('[Client] VNC not ready for profile', profileId);
+    const { dialog } = require('electron');
+    dialog.showMessageBox({
+      type: 'warning',
+      title: '连接超时',
+      message: `无法连接到 ${profileName || 'Profile ' + profileId}，请稍后重试。`,
+      buttons: ['确定'],
+    });
     return;
   }
 
@@ -95,7 +101,17 @@ async function openVnc(profileId, profileName) {
 
   vncWindows.set(String(profileId), win);
 
+  // Refresh idle timer every 5 minutes while VNC window is open
+  const idleInterval = setInterval(() => {
+    if (win.isDestroyed()) {
+      clearInterval(idleInterval);
+      return;
+    }
+    api('GET', `/browsers/${profileId}/vnc`).catch(() => {});
+  }, 5 * 60 * 1000);
+
   win.on('closed', () => {
+    clearInterval(idleInterval);
     vncWindows.delete(String(profileId));
     updateTrayMenu();
   });
