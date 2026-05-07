@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -56,6 +56,31 @@ async function waitForVnc(url, timeoutMs = 20000) {
   return false;
 }
 
+async function pasteLocalClipboardToRemote(profileId) {
+  const text = clipboard.readText();
+  if (!text) return;
+  const result = await api('POST', `/browsers/${profileId}/clipboard/paste`, { text });
+  if (!result.ok) {
+    console.error('[Client] Remote paste failed:', result.error);
+  }
+}
+
+function attachVncClipboardShortcuts(win, profileId) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const key = String(input.key || '').toLowerCase();
+    const isShortcut = input.meta || input.control;
+    if (!isShortcut || input.alt) return;
+
+    if (key === 'v') {
+      event.preventDefault();
+      pasteLocalClipboardToRemote(profileId).catch((err) => {
+        console.error('[Client] Remote paste failed:', err.message);
+      });
+    }
+  });
+}
+
 async function openVnc(profileId, profileName) {
   // Already open — bring to front
   const existing = vncWindows.get(String(profileId));
@@ -90,6 +115,8 @@ async function openVnc(profileId, profileName) {
       contextIsolation: true,
     },
   });
+
+  attachVncClipboardShortcuts(win, profileId);
 
   win.loadURL(vncUrl);
 
