@@ -60,9 +60,7 @@ async function pasteLocalClipboardToRemote(profileId) {
   const text = clipboard.readText();
   if (!text) return;
   const result = await api('POST', `/browsers/${profileId}/clipboard/paste`, { text });
-  if (!result.ok) {
-    console.error('[Client] Remote paste failed:', result.error);
-  }
+  if (!result.ok) console.error('[Clipboard] paste failed:', result.error);
 }
 
 function attachVncClipboardShortcuts(win, profileId) {
@@ -75,7 +73,14 @@ function attachVncClipboardShortcuts(win, profileId) {
     if (key === 'v') {
       event.preventDefault();
       pasteLocalClipboardToRemote(profileId).catch((err) => {
-        console.error('[Client] Remote paste failed:', err.message);
+        console.error('[Clipboard] paste failed:', err.message);
+      });
+    } else if (key === 'c' && !input.shift) {
+      event.preventDefault();
+      api('POST', `/browsers/${profileId}/clipboard/copy`).then((result) => {
+        if (result.ok && result.text) clipboard.writeText(result.text);
+      }).catch((err) => {
+        console.error('[Clipboard] copy failed:', err.message);
       });
     }
   });
