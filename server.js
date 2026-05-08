@@ -14,7 +14,7 @@ const ps = new ProfileStore();
 const fe = new FingerprintEngine();
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 // Mount API routes
 api.mount(app, { cm, bc, ps, fe });
