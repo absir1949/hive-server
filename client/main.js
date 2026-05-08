@@ -102,8 +102,10 @@ async function uploadLocalFileToRemote(profileId, win) {
   const filePath = result.filePaths[0];
   const fileName = path.basename(filePath);
   const fileData = fs.readFileSync(filePath).toString('base64');
+  console.log('[FileUpload] uploading %s (%d bytes base64)', fileName, fileData.length);
 
   const res = await api('POST', `/browsers/${profileId}/upload-file`, { fileName, fileData });
+  console.log('[FileUpload] server response:', JSON.stringify(res));
   if (!res.ok) {
     console.error('[FileUpload] server error:', res.error);
     dialog.showMessageBox(win, {
