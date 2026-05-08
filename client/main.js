@@ -82,8 +82,37 @@ function attachVncClipboardShortcuts(win, profileId) {
       }).catch((err) => {
         console.error('[Clipboard] copy failed:', err.message);
       });
+    } else if (key === 'u') {
+      event.preventDefault();
+      uploadLocalFileToRemote(profileId, win).catch((err) => {
+        console.error('[FileUpload] failed:', err.message);
+      });
     }
   });
+}
+
+async function uploadLocalFileToRemote(profileId, win) {
+  const { dialog } = require('electron');
+  const result = await dialog.showOpenDialog(win, {
+    title: '选择要上传的文件',
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths.length) return;
+
+  const filePath = result.filePaths[0];
+  const fileName = path.basename(filePath);
+  const fileData = fs.readFileSync(filePath).toString('base64');
+
+  const res = await api('POST', `/browsers/${profileId}/upload-file`, { fileName, fileData });
+  if (!res.ok) {
+    console.error('[FileUpload] server error:', res.error);
+    dialog.showMessageBox(win, {
+      type: 'warning',
+      title: '上传失败',
+      message: res.error || '文件上传失败',
+      buttons: ['确定'],
+    });
+  }
 }
 
 async function openVnc(profileId, profileName) {
