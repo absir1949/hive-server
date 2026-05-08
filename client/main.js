@@ -70,20 +70,23 @@ function attachVncClipboardShortcuts(win, profileId) {
     const isShortcut = input.meta || input.control;
     if (!isShortcut || input.alt) return;
 
+    // Prevent ALL modifier combo keys from reaching noVNC.
+    // Without this, the Meta/Ctrl keyDown reaches X11 but the target key
+    // (V/C/U) doesn't, leaving the modifier "stuck" in X11 and breaking
+    // all subsequent mouse clicks (Super+Click = window drag in openbox).
+    event.preventDefault();
+
     if (key === 'v') {
-      event.preventDefault();
       pasteLocalClipboardToRemote(profileId).catch((err) => {
         console.error('[Clipboard] paste failed:', err.message);
       });
     } else if (key === 'c' && !input.shift) {
-      event.preventDefault();
       api('POST', `/browsers/${profileId}/clipboard/copy`).then((result) => {
         if (result.ok && result.text) clipboard.writeText(result.text);
       }).catch((err) => {
         console.error('[Clipboard] copy failed:', err.message);
       });
     } else if (key === 'u') {
-      event.preventDefault();
       uploadLocalFileToRemote(profileId, win).catch((err) => {
         console.error('[FileUpload] failed:', err.message);
       });
