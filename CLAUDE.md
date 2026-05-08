@@ -32,6 +32,18 @@
 - 不用 --restore-last-session（干扰自动化），启动后主动 navigate 到 profile URL
 - 人工操作通过 noVNC 网页，不需要客户端应用
 
+### VNC 快捷键（Electron 客户端内）
+
+剪贴板和文件上传通过 CDP 直通，不走 noVNC 的剪贴板（noVNC 不支持中文）。
+
+| 快捷键 | 功能 | 说明 |
+|--------|------|------|
+| Cmd/Ctrl + V | 粘贴 | 本地剪贴板 → CDP `Input.insertText` → 远程 Chrome |
+| Cmd/Ctrl + C | 复制 | 远程 Chrome `getSelection()` → 本地剪贴板 |
+| Cmd/Ctrl + U | 上传文件 | 本地文件 → 容器 /tmp → xdotool 输入路径到文件对话框 |
+
+**文件上传流程**：先在 VNC 里点击网页的上传按钮（文件对话框弹出），再按 Cmd+U 选择本地文件。文件名仅支持英文/数字（xdotool 无法输入中文路径）。
+
 ## Development
 
 ```bash
