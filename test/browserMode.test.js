@@ -2,10 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { BROWSER_MODES, isVncMode, normalizeBrowserMode } = require('../lib/browserMode');
 
-test('browser mode defaults to VNC for backwards compatibility', () => {
-  assert.equal(normalizeBrowserMode(), BROWSER_MODES.VNC);
+test('browser mode defaults to headless for resource-safe startup', () => {
+  assert.equal(normalizeBrowserMode(), BROWSER_MODES.HEADLESS);
   assert.equal(normalizeBrowserMode('vnc'), BROWSER_MODES.VNC);
-  assert.equal(isVncMode(undefined), true);
+  assert.equal(isVncMode(undefined), false);
 });
 
 test('headless mode is supported and is not a VNC mode', () => {

@@ -56,25 +56,27 @@ Node.js 服务，职责：
 
 - **Center**：Web 管理面板，调 API 查看状态、触发操作
 - **人工操作**：启动 VNC 会话后通过 noVNC 地址直接操作服务器上的 Chrome
-- **AI**：启动 Headless 会话后调 HTTP API 做自动化
+- **AI**：直接调 HTTP API，默认按需启动 Headless 做自动化
 
-不需要 Mac 客户端应用。Headless 会话没有 VNC 地址，只通过 API/CDP 使用。
+不需要 Mac 客户端应用。只有 Electron 客户端可以申请 VNC 租约；Headless 会话没有 VNC 地址，只通过 API/CDP 使用。
 
 ## API 设计
 
 对 AI 和 Center：
 ```
 GET  /browsers                      列出所有 profile 及状态
-POST /browsers/:id/start             启动/切换会话，body: { browserMode }
+POST /browsers/:id/start             显式启动/切换会话，默认 Headless
 POST /browsers/:id/stop              停止会话，保留 Profile 数据
 POST /browsers/:id/navigate         导航到 URL（自动启动容器）
 POST /browsers/:id/execute          执行 JS
 GET  /browsers/:id/cookies          获取 cookie
 POST /browsers/:id/screenshot       截图
-GET  /browsers/:id/vnc              启动/切换到 VNC 并获取 noVNC 地址
+GET  /browsers/:id/vnc              获取 VNC 租约并返回 noVNC 地址
+POST /browsers/:id/vnc/heartbeat    刷新 VNC 租约
+POST /browsers/:id/vnc/release      释放 VNC，按需恢复 Headless
 ```
 
-采集调用方应先调用 `POST /browsers/:id/start` 并传 `browserMode: "headless"`，之后的 navigate / execute 等操作会复用该会话。VNC 入口会自动启动或切换到 VNC。旧调用没有显式启动会话时默认使用 VNC。空闲一段时间后容器自动关闭，但最近选择的会话模式会在当前 Server 进程内保留。
+采集调用方直接调用 navigate / execute 等接口即可，服务端默认按需启动 Headless。Electron 客户端调用 `/vnc` 时，服务端先停止 Headless，再使用同一个 Profile 数据目录启动 VNC。客户端关闭窗口或 VNC 心跳超时后释放租约；如果打开 VNC 前确实有 Headless 会话，则自动恢复 Headless，否则保持停止。
 
 ## Chrome 生命周期
 
@@ -92,8 +94,11 @@ GET  /browsers/:id/vnc              启动/切换到 VNC 并获取 noVNC 地址
     ▼  持续有 API 调用：保持运行
     ▼  空闲超时（如 10 分钟）：关闭容器，数据保留
     │
-    ▼  人工要看？
-noVNC 连接 → 直接看到 Chrome 窗口 → 操作完断开 → 容器继续跑或空闲关闭
+    ▼  Electron 客户端申请人工操作
+停止 Headless → 启动 VNC → noVNC 连接
+    │
+    ▼  客户端关闭或租约超时
+释放 VNC → 有 Headless 任务则恢复 Headless，否则保持停止
 ```
 
 ## 服务器重启

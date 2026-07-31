@@ -35,12 +35,24 @@ async function getBrowsers() {
 
 // --- VNC window management ---
 
-function getVncUrl(profileId) {
+function getVncSession(profileId, leaseId) {
   const serverHost = new URL(SERVER).hostname;
-  return api('GET', `/browsers/${profileId}/vnc`).then(({ ok, url }) => {
-    if (!ok || !url) return null;
-    return url.replace(/\/\/[^:\/]+/, `//${serverHost}`);
+  const query = leaseId ? `?leaseId=${encodeURIComponent(leaseId)}` : '';
+  return api('GET', `/browsers/${profileId}/vnc${query}`).then((result) => {
+    if (!result.ok || !result.url || !result.leaseId) return null;
+    return {
+      ...result,
+      url: result.url.replace(/\/\/[^:\/]+/, `//${serverHost}`),
+    };
   });
+}
+
+function heartbeatVnc(profileId, leaseId) {
+  return api('POST', `/browsers/${profileId}/vnc/heartbeat`, { leaseId });
+}
+
+function releaseVnc(profileId, leaseId) {
+  return api('POST', `/browsers/${profileId}/vnc/release`, { leaseId });
 }
 
 async function waitForVnc(url, timeoutMs = 20000) {
@@ -129,12 +141,14 @@ async function openVnc(profileId, profileName) {
     return;
   }
 
-  const vncUrl = await getVncUrl(profileId);
-  if (!vncUrl) return;
+  const vncSession = await getVncSession(profileId);
+  if (!vncSession) return;
+  const { url: vncUrl, leaseId } = vncSession;
 
   // Wait for VNC to be ready, retry up to 60s with user feedback
   const ready = await waitForVnc(vncUrl, 60000);
   if (!ready) {
+    await releaseVnc(profileId, leaseId).catch(() => {});
     const { dialog } = require('electron');
     dialog.showMessageBox({
       type: 'warning',
@@ -167,17 +181,29 @@ async function openVnc(profileId, profileName) {
 
   vncWindows.set(String(profileId), win);
 
-  // Refresh idle timer every 5 minutes while VNC window is open
-  const idleInterval = setInterval(() => {
+  // Hold a short-lived VNC lease while the client window is open. If the
+  // client crashes, the server releases the lease after the heartbeat TTL.
+  const heartbeatInterval = setInterval(() => {
     if (win.isDestroyed()) {
-      clearInterval(idleInterval);
+      clearInterval(heartbeatInterval);
       return;
     }
-    api('GET', `/browsers/${profileId}/vnc`).catch(() => {});
-  }, 5 * 60 * 1000);
+    heartbeatVnc(profileId, leaseId).then((result) => {
+      if (!result.ok) {
+        clearInterval(heartbeatInterval);
+        console.error('[VNC] lease heartbeat failed:', result.error);
+      }
+    }).catch((err) => {
+      clearInterval(heartbeatInterval);
+      console.error('[VNC] lease heartbeat failed:', err.message);
+    });
+  }, 30 * 1000);
 
   win.on('closed', () => {
-    clearInterval(idleInterval);
+    clearInterval(heartbeatInterval);
+    releaseVnc(profileId, leaseId).catch((err) => {
+      console.error('[VNC] lease release failed:', err.message);
+    });
     vncWindows.delete(String(profileId));
     updateTrayMenu();
   });
@@ -193,7 +219,7 @@ async function startAndOpenVnc(profile) {
       return;
     }
 
-    // Just open VNC — ensureConnected inside getVncUrl handles container start
+    // Opening VNC acquires the interactive lease and handles the mode switch.
     await openVnc(profile.id, profile.name);
     updateTrayMenu();
   } catch (e) {

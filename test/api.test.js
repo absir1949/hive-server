@@ -106,6 +106,22 @@ test('browser operations reuse the selected runtime mode', async () => {
   }
 });
 
+test('browser operations default to Headless when no session was selected', async () => {
+  const startedModes = [];
+  const { server } = await startApi({ onStart: (_, options) => startedModes.push(options.browserMode) });
+  try {
+    const response = await request(server, '/browsers/1/navigate', {
+      method: 'POST',
+      body: { url: 'https://example.com' },
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(startedModes, ['headless']);
+  } finally {
+    await closeApi(server);
+  }
+});
+
 test('VNC endpoint switches a generic profile into a VNC session', async () => {
   const startedModes = [];
   const stopped = [];
@@ -123,8 +139,32 @@ test('VNC endpoint switches a generic profile into a VNC session', async () => {
 
     assert.equal(response.status, 200);
     assert.match(body.url, /:6117\/vnc\.html/);
+    assert.ok(body.leaseId);
     assert.deepEqual(startedModes, ['headless', 'vnc']);
     assert.deepEqual(stopped, ['1']);
+
+    const blocked = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(blocked.status, 409);
+
+    const heartbeat = await request(server, '/browsers/1/vnc/heartbeat', {
+      method: 'POST',
+      body: { leaseId: body.leaseId },
+    });
+    assert.equal(heartbeat.status, 200);
+
+    const release = await request(server, '/browsers/1/vnc/release', {
+      method: 'POST',
+      body: { leaseId: body.leaseId },
+    });
+    const releaseBody = await release.json();
+    assert.equal(release.status, 200);
+    assert.equal(releaseBody.status, 'headless');
+    assert.equal(releaseBody.resumedBrowserMode, 'headless');
+    assert.deepEqual(startedModes, ['headless', 'vnc', 'headless']);
+    assert.deepEqual(stopped, ['1', '1']);
   } finally {
     await closeApi(server);
   }

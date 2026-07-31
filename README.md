@@ -20,12 +20,13 @@ Linux 服务器
 └─────────────────────────────────────────────┘
 ```
 
-- **API 调用者不需要管容器生命周期** — 调 navigate 时容器自动启动，空闲自动关闭
+- **默认 Headless** — 普通 API 和后台保活按需启动 Headless，不启动桌面和 noVNC
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
-- **双运行模式** — 启动会话时传 `browserMode: "vnc"` 或 `"headless"`；Headless 容器不启动桌面和 noVNC
+- **客户端 VNC 租约** — 只有 Electron 客户端打开 VNC；关闭窗口或心跳超时后释放
+- **双运行模式** — 同一 Profile 可在 Headless 和 VNC 之间切换，但两个 Chrome 不会同时运行
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
-同一个 Profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。启动不同模式时服务端会先停止旧容器，再按新模式启动；Profile 的登录态和数据目录保持不变。
+同一个 Profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。切换时服务端会先停止旧容器，再按新模式启动；不复制 Profile，也不需要手动同步 Cookie，登录态和数据目录保持不变。
 
 ## 快速开始
 
@@ -60,21 +61,16 @@ curl -X POST http://localhost:3000/profiles \
   -H "Content-Type: application/json" \
   -d '{"name":"Shop 1","url":"https://example.com"}'
 
-# 启动 Headless 采集会话
-curl -X POST http://localhost:3000/browsers/1/start \
-  -H "Content-Type: application/json" \
-  -d '{"browserMode":"headless"}'
-
 # 列表
 curl http://localhost:3000/profiles
 ```
 
 ### 浏览器操作
 
-启动会话后，所有操作自动连接对应模式的 Chrome。旧调用如果没有显式启动会话，仍默认启动 VNC，保持兼容。
+普通操作会自动启动 Headless Chrome，调用方不需要传运行模式。也可以显式启动 Headless 会话：
 
 ```bash
-# 启动 Headless 会话；同一个 Profile 也可以之后切换回 VNC
+# 显式启动 Headless 会话（通常直接调用 navigate 即可）
 curl -X POST http://localhost:3000/browsers/1/start \
   -H "Content-Type: application/json" \
   -d '{"browserMode":"headless"}'
@@ -97,8 +93,18 @@ curl -X POST http://localhost:3000/browsers/1/screenshot
 # 获取 cookies
 curl http://localhost:3000/browsers/1/cookies
 
-# 获取 noVNC 地址；如果当前是 Headless，会切换为 VNC 会话
+# 客户端打开 VNC，响应中会返回 leaseId
 curl http://localhost:3000/browsers/1/vnc
+
+# 客户端持有 VNC 时定期发送心跳
+curl -X POST http://localhost:3000/browsers/1/vnc/heartbeat \
+  -H "Content-Type: application/json" \
+  -d '{"leaseId":"<leaseId>"}'
+
+# 客户端关闭窗口后释放 VNC；之前有 Headless 会话时会自动恢复
+curl -X POST http://localhost:3000/browsers/1/vnc/release \
+  -H "Content-Type: application/json" \
+  -d '{"leaseId":"<leaseId>"}'
 
 # 显式停止当前会话，Profile 数据仍然保留
 curl -X POST http://localhost:3000/browsers/1/stop
@@ -114,16 +120,18 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `PUT` | `/profiles/:id` | 修改 |
 | `DELETE` | `/profiles/:id` | 删除（自动停容器） |
 | `GET` | `/browsers` | 所有容器状态 |
-| `POST` | `/browsers/:id/start` | 启动或切换浏览器会话（body: `browserMode`） |
+| `POST` | `/browsers/:id/start` | 显式启动或切换浏览器会话（默认 `headless`） |
 | `POST` | `/browsers/:id/stop` | 停止当前浏览器会话，保留 Profile 数据 |
 | `POST` | `/browsers/:id/navigate` | 导航 |
 | `POST` | `/browsers/:id/execute` | 执行 JS |
 | `GET` | `/browsers/:id/cookies` | 全量 cookies |
 | `POST` | `/browsers/:id/screenshot` | 截图（base64） |
-| `GET` | `/browsers/:id/vnc` | noVNC 地址 |
+| `GET` | `/browsers/:id/vnc` | 获取 VNC 租约和 noVNC 地址 |
+| `POST` | `/browsers/:id/vnc/heartbeat` | 刷新 VNC 租约 |
+| `POST` | `/browsers/:id/vnc/release` | 释放 VNC 并按需恢复 Headless |
 | `GET` | `/health` | 健康检查 |
 
-`browserMode` 不属于 Profile，只能传给 `POST /browsers/:id/start`。Profile 创建和修改接口不需要运行模式。启动 Headless 后，导航、执行脚本、Cookie、页面操作和 CDP 截图接口都会复用 Headless 会话；VNC、剪贴板和文件上传接口要求当前会话是 VNC。
+`browserMode` 不属于 Profile。普通导航、脚本、Cookie、页面和截图接口默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 租约默认 2 分钟未收到心跳就释放，可通过 `VNC_LEASE_TTL_MS` 调整。
 
 ## 配置
 
@@ -131,6 +139,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 |----------|--------|------|
 | `PORT` | `3000` | 服务端口 |
 | `IDLE_TIMEOUT_MS` | `600000` | 空闲超时（ms），默认 10 分钟 |
+| `VNC_LEASE_TTL_MS` | `120000` | VNC 心跳租约超时（ms），默认 2 分钟 |
 | `HOST_DATA_DIR` | `./data` | 数据���录（Docker 部署时需设为宿主机绝对路���） |
 
 ## 模块
