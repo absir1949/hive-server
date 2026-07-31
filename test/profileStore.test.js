@@ -9,7 +9,7 @@ const profilesFile = path.join(tempDir, 'profiles.json');
 process.env.PROFILES_FILE = profilesFile;
 const ProfileStore = require('../lib/profileStore');
 
-test('legacy profiles default to VNC and new profiles can use headless mode', () => {
+test('profiles keep account data without persisting a browser mode', () => {
   fs.writeFileSync(profilesFile, JSON.stringify({
     nextId: 2,
     items: {
@@ -18,15 +18,9 @@ test('legacy profiles default to VNC and new profiles can use headless mode', ()
   }));
 
   const store = new ProfileStore();
-  assert.equal(store.get(1).browserMode, 'vnc');
+  assert.equal(store.get(1).browserMode, undefined);
 
   const profile = store.create({ name: 'collector', url: 'about:blank', browserMode: 'headless' });
-  assert.equal(profile.browserMode, 'headless');
-  assert.equal(store.get(profile.id).browserMode, 'headless');
-});
-
-test('profile store rejects unsupported browser modes', () => {
-  const store = new ProfileStore();
-  assert.throws(() => store.create({ name: 'invalid', browserMode: 'lightpanda' }), /browserMode must be one of/);
-  assert.throws(() => store.update(1, { browserMode: 'lightpanda' }), /browserMode must be one of/);
+  assert.equal(profile.browserMode, undefined);
+  assert.equal(store.get(profile.id).browserMode, undefined);
 });

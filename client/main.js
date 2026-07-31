@@ -184,10 +184,6 @@ async function openVnc(profileId, profileName) {
 }
 
 async function startAndOpenVnc(profile) {
-  if (profile.browserMode === 'headless') {
-    console.warn('[Client] Headless profiles do not have a VNC session:', profile.id);
-    return;
-  }
   try {
     // Already open — bring to front
     const existing = vncWindows.get(String(profile.id));
@@ -236,10 +232,12 @@ async function updateTrayMenu() {
     return;
   }
 
-  const runningIds = new Set(browsers.filter(b => b.status === 'running').map(b => b.profileId));
+  const runningByProfile = new Map(
+    browsers.filter(b => b.status === 'running').map(b => [String(b.profileId), b]),
+  );
 
-  const running = profiles.filter(p => runningIds.has(String(p.id)));
-  const stopped = profiles.filter(p => !runningIds.has(String(p.id)));
+  const running = profiles.filter(p => runningByProfile.has(String(p.id)));
+  const stopped = profiles.filter(p => !runningByProfile.has(String(p.id)));
 
   const menuTemplate = [];
 
@@ -247,11 +245,11 @@ async function updateTrayMenu() {
   if (running.length > 0) {
     menuTemplate.push({ label: '运行中', enabled: false });
     for (const p of running) {
+      const browser = runningByProfile.get(String(p.id));
       const hasWindow = vncWindows.has(String(p.id)) && !vncWindows.get(String(p.id)).isDestroyed();
       menuTemplate.push({
-        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}${p.browserMode === 'headless' ? '（采集）' : ''}`,
-        enabled: p.browserMode !== 'headless',
-        click: p.browserMode === 'headless' ? undefined : () => openVnc(p.id, p.name),
+        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}${browser.browserMode === 'headless' ? '（采集中）' : ''}`,
+        click: () => openVnc(p.id, p.name),
       });
     }
     menuTemplate.push({ type: 'separator' });
@@ -262,9 +260,8 @@ async function updateTrayMenu() {
     menuTemplate.push({ label: '未启动', enabled: false });
     for (const p of stopped) {
       menuTemplate.push({
-        label: `  ⚪ ${p.name}${p.browserMode === 'headless' ? '（采集）' : ''}`,
-        enabled: p.browserMode !== 'headless',
-        click: p.browserMode === 'headless' ? undefined : () => startAndOpenVnc(p),
+        label: `  ⚪ ${p.name}`,
+        click: () => startAndOpenVnc(p),
       });
     }
     menuTemplate.push({ type: 'separator' });
@@ -292,7 +289,7 @@ async function updateTrayMenu() {
 function showAddProfileDialog() {
   const win = new BrowserWindow({
     width: 360,
-    height: 340,
+    height: 300,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -395,13 +392,12 @@ ipcMain.handle('server:setUrl', async (_, newUrl) => {
   return { ok: true, restart: true };
 });
 
-ipcMain.handle('profile:add', async (_, name, url, type, keepAlive, browserMode) => {
+ipcMain.handle('profile:add', async (_, name, url, type, keepAlive) => {
   const res = await api('POST', '/profiles', {
     name,
     url,
     type: type || 'generic',
     keepAliveInterval: keepAlive === undefined ? 3600 : keepAlive,
-    browserMode: browserMode || 'vnc',
   });
   updateTrayMenu();
   return res;
@@ -415,20 +411,19 @@ ipcMain.handle('profile:delete', async (_, profileId) => {
 
 ipcMain.handle('profile:update', async (_, profileId, data) => {
   const res = await api('PUT', `/profiles/${profileId}`, data);
-  if (res.ok && data.browserMode === 'headless') {
-    const win = vncWindows.get(String(profileId));
-    if (win && !win.isDestroyed()) win.close();
-  }
   updateTrayMenu();
   return res;
 });
 
 ipcMain.handle('profile:getAll', async () => {
   const [profiles, browsers] = await Promise.all([getProfiles(), getBrowsers()]);
-  const runningIds = new Set(browsers.filter(b => b.status === 'running').map(b => b.profileId));
+  const activeBrowsers = new Map(
+    browsers.filter(b => b.status === 'running').map(b => [String(b.profileId), b]),
+  );
   return profiles.map(p => ({
     ...p,
-    isRunning: runningIds.has(String(p.id)),
+    isRunning: activeBrowsers.has(String(p.id)),
+    activeBrowserMode: activeBrowsers.get(String(p.id))?.browserMode || null,
   }));
 });
 

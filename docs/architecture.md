@@ -16,13 +16,10 @@ Linux 服务器
 │  └── 调度：按需启动/关闭 Chrome 容器                  │
 │                                                     │
 │  Docker 容器 × N（按需启动）                          │
-│  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ VNC profile      │  │ Headless profile │  ...    │
-│  │ Chrome + Xvfb    │  │ Chrome + CDP    │         │
-│  │ + VNC + noVNC    │  │ no desktop      │         │
-│  │ profile_001      │  │ profile_002      │         │
-│  │ CDP + noVNC      │  │ CDP only        │         │
-│  └──────────────────┘  └──────────────────┘         │
+│  ┌──────────────────────────────────────────────┐    │
+│  │ 一个 Profile 可按会话选择 VNC 或 Headless      │    │
+│  │ Profile 数据持久化，运行模式不写入 Profile     │    │
+│  └──────────────────────────────────────────────┘    │
 │                                                     │
 │  Docker Compose 编排                                 │
 └───────────────┬──────────────────┬──────────────────┘
@@ -38,11 +35,11 @@ Linux 服务器
 
 ### 第一层：Chrome 运行环境（现成，不自己造）
 
-用现成的 Docker 镜像（如 `kasmweb/chrome` 或基于 `selenium/standalone-chrome` 改造），每个容器按 profile 的 `browserMode` 选择运行链路：
+用现成的 Docker 镜像（如 `kasmweb/chrome` 或基于 `selenium/standalone-chrome` 改造），每个容器按启动会话时传入的 `browserMode` 选择运行链路：
 - `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，启动 VNC/noVNC 和 CDP
 - `headless`：Chromium 使用 `--headless=new`，只启动 CDP，不启动桌面、输入法和 noVNC
 
-每个 profile 一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 profile 的 VNC 和 Headless 容器不能同时打开同一数据目录，模式切换时服务端会先停止旧容器。
+每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 Profile 的 VNC 和 Headless 容器不能同时打开同一数据目录，切换会话模式时服务端会先停止旧容器。
 
 ### 第二层：Hive Browser Server（我们的核心）
 
@@ -52,30 +49,32 @@ Node.js 服务，职责：
 - **代理分配**：每个 profile 可配独立代理
 - **HTTP API**：对外提供 navigate / execute / cookies / screenshot 等操作
 - **容器调度**：按需启动/关闭 Docker 容器，不用的容器关掉省资源
-- **运行模式**：按 profile 选择 VNC 登录或 Headless 采集
+- **运行模式**：按浏览器会话选择 VNC 登录或 Headless 采集，不写入 Profile
 - **CDP 连接**：通过 Puppeteer 连接到容器里的 Chrome，执行自动化操作
 
 ### 第三层：客户端（纯消费者）
 
 - **Center**：Web 管理面板，调 API 查看状态、触发操作
-- **人工操作**：VNC profile 通过 noVNC 地址直接操作服务器上的 Chrome
-- **AI**：调 HTTP API 做自动化
+- **人工操作**：启动 VNC 会话后通过 noVNC 地址直接操作服务器上的 Chrome
+- **AI**：启动 Headless 会话后调 HTTP API 做自动化
 
-不需要 Mac 客户端应用。Headless profile 没有 VNC 地址，只通过 API/CDP 使用。
+不需要 Mac 客户端应用。Headless 会话没有 VNC 地址，只通过 API/CDP 使用。
 
 ## API 设计
 
 对 AI 和 Center：
 ```
 GET  /browsers                      列出所有 profile 及状态
+POST /browsers/:id/start             启动/切换会话，body: { browserMode }
+POST /browsers/:id/stop              停止会话，保留 Profile 数据
 POST /browsers/:id/navigate         导航到 URL（自动启动容器）
 POST /browsers/:id/execute          执行 JS
 GET  /browsers/:id/cookies          获取 cookie
 POST /browsers/:id/screenshot       截图
-GET  /browsers/:id/vnc              获取该 profile 的 noVNC 访问地址
+GET  /browsers/:id/vnc              启动/切换到 VNC 并获取 noVNC 地址
 ```
 
-调用者不需要管容器的启停。调 navigate 时，如果容器没在跑，系统自动启动容器、等 Chrome 就绪、执行操作、返回结果。空闲一段时间后容器自动关闭释放资源。
+采集调用方应先调用 `POST /browsers/:id/start` 并传 `browserMode: "headless"`，之后的 navigate / execute 等操作会复用该会话。VNC 入口会自动启动或切换到 VNC。旧调用没有显式启动会话时默认使用 VNC。空闲一段时间后容器自动关闭，但最近选择的会话模式会在当前 Server 进程内保留。
 
 ## Chrome 生命周期
 
@@ -83,7 +82,7 @@ GET  /browsers/:id/vnc              获取该 profile 的 noVNC 访问地址
 空闲状态：容器关闭，user-data-dir 数据保留在磁盘
     │
     ▼  API 调用到达
-启动容器 → 按 browserMode 启动 Chrome → 登录态由 user-data-dir 自动恢复
+启动容器 → 按本次会话的 browserMode 启动 Chrome → 登录态由 user-data-dir 自动恢复
     │
     ▼  API 主动 navigate 到 profile 配置的 URL
     │

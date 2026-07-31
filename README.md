@@ -1,6 +1,6 @@
 # Hive Server
 
-浏览器会话池服务器。在 Linux 服务器上管理多个隔离的 Chrome 实例（Docker 容器），通过 HTTP API 提供自动化操作，并按 profile 支持 VNC 人工登录或 Headless 自动采集。
+浏览器会话池服务器。在 Linux 服务器上管理多个隔离的 Chrome 实例（Docker 容器），通过 HTTP API 提供自动化操作。Profile 保存账号和登录态，启动浏览器会话时再选择 VNC 人工登录或 Headless 自动采集。
 
 ## 架构
 
@@ -13,20 +13,19 @@ Linux 服务器
 │  └── 调度：按需启动/关闭 Chrome 容器         │
 │                                             │
 │  Docker 容器 × N（按需启动）                 │
-│  ┌─────────────┐  ┌────────────────┐        │
-│  │ VNC profile │  │ Headless profile│  ...   │
-│  │ Chrome+Xvfb │  │ Chrome + CDP   │        │
-│  │ +noVNC      │  │ no desktop     │        │
-│  └─────────────┘  └────────────────┘        │
+│  ┌──────────────────────────────────────┐   │
+│  │ 一个 Profile 可先 VNC、再 Headless     │   │
+│  │ Profile 数据持久化，运行模式属于会话   │   │
+│  └──────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
 - **API 调用者不需要管容器生命周期** — 调 navigate 时容器自动启动，空闲自动关闭
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
-- **双运行模式** — `browserMode: "vnc"` 用于登录和人工操作，`browserMode: "headless"` 用于采集；Headless 容器不启动桌面和 noVNC
+- **双运行模式** — 启动会话时传 `browserMode: "vnc"` 或 `"headless"`；Headless 容器不启动桌面和 noVNC
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
-同一个 profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。修改运行模式时服务端会先停止旧容器，再按新模式懒启动。
+同一个 Profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。启动不同模式时服务端会先停止旧容器，再按新模式启动；Profile 的登录态和数据目录保持不变。
 
 ## 快速开始
 
@@ -56,15 +55,15 @@ docker compose up -d
 ### Profile 管理
 
 ```bash
-# 创建 VNC profile（默认模式）
+# 创建通用 Profile（不绑定浏览器运行模式）
 curl -X POST http://localhost:3000/profiles \
   -H "Content-Type: application/json" \
   -d '{"name":"Shop 1","url":"https://example.com"}'
 
-# 创建 Headless 采集 profile
-curl -X POST http://localhost:3000/profiles \
+# 启动 Headless 采集会话
+curl -X POST http://localhost:3000/browsers/1/start \
   -H "Content-Type: application/json" \
-  -d '{"name":"Collector 1","url":"https://example.com","browserMode":"headless"}'
+  -d '{"browserMode":"headless"}'
 
 # 列表
 curl http://localhost:3000/profiles
@@ -72,7 +71,14 @@ curl http://localhost:3000/profiles
 
 ### 浏览器操作
 
-所有操作自动启动容器 + 连接 Chrome，调用者无需关心。
+启动会话后，所有操作自动连接对应模式的 Chrome。旧调用如果没有显式启动会话，仍默认启动 VNC，保持兼容。
+
+```bash
+# 启动 Headless 会话；同一个 Profile 也可以之后切换回 VNC
+curl -X POST http://localhost:3000/browsers/1/start \
+  -H "Content-Type: application/json" \
+  -d '{"browserMode":"headless"}'
+```
 
 ```bash
 # 导航
@@ -91,8 +97,11 @@ curl -X POST http://localhost:3000/browsers/1/screenshot
 # 获取 cookies
 curl http://localhost:3000/browsers/1/cookies
 
-# 获取 noVNC 地址（仅 browserMode=vnc）
+# 获取 noVNC 地址；如果当前是 Headless，会切换为 VNC 会话
 curl http://localhost:3000/browsers/1/vnc
+
+# 显式停止当前会话，Profile 数据仍然保留
+curl -X POST http://localhost:3000/browsers/1/stop
 ```
 
 ### 完整端点列表
@@ -105,6 +114,8 @@ curl http://localhost:3000/browsers/1/vnc
 | `PUT` | `/profiles/:id` | 修改 |
 | `DELETE` | `/profiles/:id` | 删除（自动停容器） |
 | `GET` | `/browsers` | 所有容器状态 |
+| `POST` | `/browsers/:id/start` | 启动或切换浏览器会话（body: `browserMode`） |
+| `POST` | `/browsers/:id/stop` | 停止当前浏览器会话，保留 Profile 数据 |
 | `POST` | `/browsers/:id/navigate` | 导航 |
 | `POST` | `/browsers/:id/execute` | 执行 JS |
 | `GET` | `/browsers/:id/cookies` | 全量 cookies |
@@ -112,7 +123,7 @@ curl http://localhost:3000/browsers/1/vnc
 | `GET` | `/browsers/:id/vnc` | noVNC 地址 |
 | `GET` | `/health` | 健康检查 |
 
-`/profiles` 和 `PUT /profiles/:id` 支持 `browserMode`：`vnc`（默认）或 `headless`。Headless profile 调用 VNC、剪贴板和文件上传接口会返回 `409`；导航、执行脚本、Cookie、页面操作和 CDP 截图仍然可用。
+`browserMode` 不属于 Profile，只能传给 `POST /browsers/:id/start`。Profile 创建和修改接口不需要运行模式。启动 Headless 后，导航、执行脚本、Cookie、页面操作和 CDP 截图接口都会复用 Headless 会话；VNC、剪贴板和文件上传接口要求当前会话是 VNC。
 
 ## 配置
 

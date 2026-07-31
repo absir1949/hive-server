@@ -44,7 +44,7 @@
     let profiles = [];
 
     async function load() {
-      profiles = (await window.electronAPI.getAllProfiles()).filter(p => p.browserMode !== 'headless');
+      profiles = await window.electronAPI.getAllProfiles();
       const el = document.getElementById('list');
       if (profiles.length === 0) { el.innerHTML = '<div class="empty">暂无配置</div>'; return; }
 
