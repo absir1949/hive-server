@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# Layer 2: Display + VNC stack
+# Layer 2: Display + VNC stack (used only by browserMode=vnc)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \

@@ -2,24 +2,30 @@
 set -e
 
 # If a command is passed (e.g. "echo image built"), execute it directly and exit.
-# This allows the build-only service to exit immediately after image build.
 if [ $# -gt 0 ]; then
   exec "$@"
 fi
 
-# Clean stale Chrome lock files (left behind when container is killed)
+# Clean stale Chrome lock files (left behind when container is killed).
 rm -f /data/SingletonLock /data/SingletonSocket /data/SingletonCookie
 
-# --- Xvfb ---
-Xvfb :1 -screen 0 1920x1080x24 -ac &
-sleep 1
+BROWSER_MODE="${BROWSER_MODE:-vnc}"
+case "$BROWSER_MODE" in
+  vnc|headless) ;;
+  *)
+    echo "Unsupported BROWSER_MODE: $BROWSER_MODE (expected vnc or headless)" >&2
+    exit 1
+    ;;
+esac
 
-export DISPLAY=:1
+if [ "$BROWSER_MODE" = "vnc" ]; then
+  # --- Display and desktop services ---
+  Xvfb :1 -screen 0 1920x1080x24 -ac &
+  sleep 1
+  export DISPLAY=:1
 
-# --- Openbox (window manager) ---
-# Configure to auto-maximize all windows without decorations
-mkdir -p /root/.config/openbox
-cat > /root/.config/openbox/rc.xml << 'OBXML'
+  mkdir -p /root/.config/openbox
+  cat > /root/.config/openbox/rc.xml <<'OBXML'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_config xmlns="http://openbox.org/3.4/rc">
   <applications>
@@ -30,26 +36,22 @@ cat > /root/.config/openbox/rc.xml << 'OBXML'
   </applications>
 </openbox_config>
 OBXML
-openbox --config-file /root/.config/openbox/rc.xml &
-sleep 1
+  openbox --config-file /root/.config/openbox/rc.xml &
+  sleep 1
 
-# --- D-Bus (required by fcitx) ---
-eval $(dbus-launch --sh-syntax)
-export DBUS_SESSION_BUS_ADDRESS
+  # --- D-Bus and Fcitx (required for Chinese input) ---
+  eval $(dbus-launch --sh-syntax)
+  export DBUS_SESSION_BUS_ADDRESS
+  export GTK_IM_MODULE=fcitx
+  export QT_IM_MODULE=fcitx
+  export XMODIFIERS=@im=fcitx
+  fcitx -d &
+  sleep 1
 
-# --- Fcitx (Chinese input method) ---
-export GTK_IM_MODULE=fcitx
-export QT_IM_MODULE=fcitx
-export XMODIFIERS=@im=fcitx
-fcitx -d &
-sleep 1
-
-# --- Clipboard sync ---
-# autocutsel keeps X CLIPBOARD and PRIMARY selection in sync.
-# x11vnc bridges VNC clipboard ↔ X selection, autocutsel bridges X selection ↔ X clipboard.
-# Together they enable copy-paste between noVNC and Chrome.
-autocutsel -selection CLIPBOARD &
-autocutsel -selection PRIMARY &
+  # Keep X CLIPBOARD and PRIMARY selection in sync for noVNC users.
+  autocutsel -selection CLIPBOARD &
+  autocutsel -selection PRIMARY &
+fi
 
 # --- Chrome ---
 CHROME_FLAGS=(
@@ -59,13 +61,18 @@ CHROME_FLAGS=(
   --no-first-run
   --no-default-browser-check
   --disable-infobars
-  --window-position=0,0
   --window-size=1920,1080
   --disable-background-networking
   --disable-sync
   --remote-debugging-port=9223
   --user-data-dir=/data
 )
+
+if [ "$BROWSER_MODE" = "headless" ]; then
+  CHROME_FLAGS+=(--headless=new)
+else
+  CHROME_FLAGS+=(--window-position=0,0)
+fi
 
 # Optional: proxy
 if [ -n "$CHROME_PROXY" ]; then
@@ -95,23 +102,26 @@ chromium "${CHROME_FLAGS[@]}" "$CHROME_URL" &
 CHROME_PID=$!
 sleep 2
 
-# Force Chrome to re-layout at correct viewport size.
-# The first tab gets stuck at 800x600 because Chrome renders it before
-# openbox has time to maximize the window. Toggling the window size
-# forces Chrome to re-layout all tabs at the actual window dimensions.
-xdotool search --class chromium windowsize --sync 800 600
-sleep 0.3
-xdotool search --class chromium windowsize --sync 1920 1080
+if [ "$BROWSER_MODE" = "vnc" ]; then
+  # Force Chrome to re-layout at the actual VNC viewport size.
+  xdotool search --class chromium windowsize --sync 800 600
+  sleep 0.3
+  xdotool search --class chromium windowsize --sync 1920 1080
+fi
 
-# --- socat: expose CDP to 0.0.0.0 (Chrome ignores --remote-debugging-address) ---
+# Chrome ignores --remote-debugging-address, so expose its loopback CDP port
+# through a small TCP forwarder inside the container.
 socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
 
-# --- x11vnc + noVNC ---
-x11vnc -display :1 -forever -nopw -rfbport 5900 -q &
-sleep 1
-websockify --web /usr/share/novnc 6080 localhost:5900 &
+if [ "$BROWSER_MODE" = "vnc" ]; then
+  # --- x11vnc + noVNC ---
+  x11vnc -display :1 -forever -nopw -rfbport 5900 -q &
+  sleep 1
+  websockify --web /usr/share/novnc 6080 localhost:5900 &
+  echo "Hive Chrome ready — mode: vnc, CDP :9222, noVNC :6080"
+else
+  echo "Hive Chrome ready — mode: headless, CDP :9222"
+fi
 
-echo "Hive Chrome ready — CDP :9222, noVNC :6080"
-
-# Keep container alive — wait for Chrome to exit
+# Keep container alive — wait for Chrome to exit.
 wait $CHROME_PID

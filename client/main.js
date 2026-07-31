@@ -184,6 +184,10 @@ async function openVnc(profileId, profileName) {
 }
 
 async function startAndOpenVnc(profile) {
+  if (profile.browserMode === 'headless') {
+    console.warn('[Client] Headless profiles do not have a VNC session:', profile.id);
+    return;
+  }
   try {
     // Already open — bring to front
     const existing = vncWindows.get(String(profile.id));
@@ -245,8 +249,9 @@ async function updateTrayMenu() {
     for (const p of running) {
       const hasWindow = vncWindows.has(String(p.id)) && !vncWindows.get(String(p.id)).isDestroyed();
       menuTemplate.push({
-        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}`,
-        click: () => openVnc(p.id, p.name),
+        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}${p.browserMode === 'headless' ? '（采集）' : ''}`,
+        enabled: p.browserMode !== 'headless',
+        click: p.browserMode === 'headless' ? undefined : () => openVnc(p.id, p.name),
       });
     }
     menuTemplate.push({ type: 'separator' });
@@ -257,8 +262,9 @@ async function updateTrayMenu() {
     menuTemplate.push({ label: '未启动', enabled: false });
     for (const p of stopped) {
       menuTemplate.push({
-        label: `  ⚪ ${p.name}`,
-        click: () => startAndOpenVnc(p),
+        label: `  ⚪ ${p.name}${p.browserMode === 'headless' ? '（采集）' : ''}`,
+        enabled: p.browserMode !== 'headless',
+        click: p.browserMode === 'headless' ? undefined : () => startAndOpenVnc(p),
       });
     }
     menuTemplate.push({ type: 'separator' });
@@ -286,7 +292,7 @@ async function updateTrayMenu() {
 function showAddProfileDialog() {
   const win = new BrowserWindow({
     width: 360,
-    height: 290,
+    height: 340,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -389,8 +395,14 @@ ipcMain.handle('server:setUrl', async (_, newUrl) => {
   return { ok: true, restart: true };
 });
 
-ipcMain.handle('profile:add', async (_, name, url, type, keepAlive) => {
-  const res = await api('POST', '/profiles', { name, url, type: type || 'generic', keepAliveInterval: keepAlive || 3600 });
+ipcMain.handle('profile:add', async (_, name, url, type, keepAlive, browserMode) => {
+  const res = await api('POST', '/profiles', {
+    name,
+    url,
+    type: type || 'generic',
+    keepAliveInterval: keepAlive === undefined ? 3600 : keepAlive,
+    browserMode: browserMode || 'vnc',
+  });
   updateTrayMenu();
   return res;
 });
@@ -403,6 +415,10 @@ ipcMain.handle('profile:delete', async (_, profileId) => {
 
 ipcMain.handle('profile:update', async (_, profileId, data) => {
   const res = await api('PUT', `/profiles/${profileId}`, data);
+  if (res.ok && data.browserMode === 'headless') {
+    const win = vncWindows.get(String(profileId));
+    if (win && !win.isDestroyed()) win.close();
+  }
   updateTrayMenu();
   return res;
 });

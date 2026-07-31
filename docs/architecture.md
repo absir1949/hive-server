@@ -2,7 +2,7 @@
 
 ## 要解决的问题
 
-很多网站没有 API，只能通过浏览器登录态来做自动化。但本地电脑无法 7×24 在线，需要把浏览器放到服务器上。服务器上可能有几十上百个账号，不能全部同时开着。人工偶尔需要手动操作这些浏览器，不想重新登录。
+很多网站没有 API，只能通过浏览器登录态来做自动化。但本地电脑无法 7×24 在线，需要把浏览器放到服务器上。服务器上可能有几十上百个账号，不能全部同时开着。人工偶尔需要手动操作这些浏览器，不想重新登录；自动采集则不需要承担桌面和 VNC 的运行开销。
 
 ## 架构总览
 
@@ -17,11 +17,11 @@ Linux 服务器
 │                                                     │
 │  Docker 容器 × N（按需启动）                          │
 │  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ Chrome + Xvfb    │  │ Chrome + Xvfb    │  ...    │
-│  │ + VNC + noVNC    │  │ + VNC + noVNC    │         │
+│  │ VNC profile      │  │ Headless profile │  ...    │
+│  │ Chrome + Xvfb    │  │ Chrome + CDP    │         │
+│  │ + VNC + noVNC    │  │ no desktop      │         │
 │  │ profile_001      │  │ profile_002      │         │
-│  │ CDP: 9201        │  │ CDP: 9202        │         │
-│  │ noVNC: 6901      │  │ noVNC: 6902      │         │
+│  │ CDP + noVNC      │  │ CDP only        │         │
 │  └──────────────────┘  └──────────────────┘         │
 │                                                     │
 │  Docker Compose 编排                                 │
@@ -38,13 +38,11 @@ Linux 服务器
 
 ### 第一层：Chrome 运行环境（现成，不自己造）
 
-用现成的 Docker 镜像（如 `kasmweb/chrome` 或基于 `selenium/standalone-chrome` 改造），每个容器里：
-- Chromium 跑在 Xvfb 虚拟显示器里
-- VNC 服务器暴露桌面
-- noVNC 提供 Web 访问（人工打开浏览器就能用）
-- CDP 端口暴露（给 Puppeteer 自动化用）
+用现成的 Docker 镜像（如 `kasmweb/chrome` 或基于 `selenium/standalone-chrome` 改造），每个容器按 profile 的 `browserMode` 选择运行链路：
+- `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，启动 VNC/noVNC 和 CDP
+- `headless`：Chromium 使用 `--headless=new`，只启动 CDP，不启动桌面、输入法和 noVNC
 
-每个 profile 一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。
+每个 profile 一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 profile 的 VNC 和 Headless 容器不能同时打开同一数据目录，模式切换时服务端会先停止旧容器。
 
 ### 第二层：Hive Browser Server（我们的核心）
 
@@ -54,15 +52,16 @@ Node.js 服务，职责：
 - **代理分配**：每个 profile 可配独立代理
 - **HTTP API**：对外提供 navigate / execute / cookies / screenshot 等操作
 - **容器调度**：按需启动/关闭 Docker 容器，不用的容器关掉省资源
+- **运行模式**：按 profile 选择 VNC 登录或 Headless 采集
 - **CDP 连接**：通过 Puppeteer 连接到容器里的 Chrome，执行自动化操作
 
 ### 第三层：客户端（纯消费者）
 
 - **Center**：Web 管理面板，调 API 查看状态、触发操作
-- **人工操作**：浏览器打开 noVNC 地址，直接操作服务器上的 Chrome，跟本地用浏览器一样
+- **人工操作**：VNC profile 通过 noVNC 地址直接操作服务器上的 Chrome
 - **AI**：调 HTTP API 做自动化
 
-不需要 Mac 客户端应用。人工操作通过 noVNC 网页完成。
+不需要 Mac 客户端应用。Headless profile 没有 VNC 地址，只通过 API/CDP 使用。
 
 ## API 设计
 
@@ -84,7 +83,7 @@ GET  /browsers/:id/vnc              获取该 profile 的 noVNC 访问地址
 空闲状态：容器关闭，user-data-dir 数据保留在磁盘
     │
     ▼  API 调用到达
-启动容器 → Chrome 在 Xvfb 中启动 → 登录态由 user-data-dir 自动恢复
+启动容器 → 按 browserMode 启动 Chrome → 登录态由 user-data-dir 自动恢复
     │
     ▼  API 主动 navigate 到 profile 配置的 URL
     │

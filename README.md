@@ -1,6 +1,6 @@
 # Hive Server
 
-浏览器会话池服务器。在 Linux 服务器上管理多个隔离的 Chrome 实例（Docker 容器），通过 HTTP API 提供自动化操作，通过 noVNC 提供人工远程访问。
+浏览器会话池服务器。在 Linux 服务器上管理多个隔离的 Chrome 实例（Docker 容器），通过 HTTP API 提供自动化操作，并按 profile 支持 VNC 人工登录或 Headless 自动采集。
 
 ## 架构
 
@@ -13,17 +13,20 @@ Linux 服务器
 │  └── 调度：按需启动/关闭 Chrome 容器         │
 │                                             │
 │  Docker 容器 × N（按需启动）                 │
-│  ┌─────────────┐  ┌─────────────┐           │
-│  │ Chrome+Xvfb │  │ Chrome+Xvfb │  ...      │
-│  │ +VNC+noVNC  │  │ +VNC+noVNC  │           │
-│  │ profile 1   │  │ profile 2   │           │
-│  └─────────────┘  └─────────────┘           │
+│  ┌─────────────┐  ┌────────────────┐        │
+│  │ VNC profile │  │ Headless profile│  ...   │
+│  │ Chrome+Xvfb │  │ Chrome + CDP   │        │
+│  │ +noVNC      │  │ no desktop     │        │
+│  └─────────────┘  └────────────────┘        │
 └─────────────────────────────────────────────┘
 ```
 
 - **API 调用者不需要管容器生命周期** — 调 navigate 时容器自动启动，空闲自动关闭
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
+- **双运行模式** — `browserMode: "vnc"` 用于登录和人工操作，`browserMode: "headless"` 用于采集；Headless 容器不启动桌面和 noVNC
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
+
+同一个 profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。修改运行模式时服务端会先停止旧容器，再按新模式懒启动。
 
 ## 快速开始
 
@@ -53,10 +56,15 @@ docker compose up -d
 ### Profile 管理
 
 ```bash
-# 创建 profile
+# 创建 VNC profile（默认模式）
 curl -X POST http://localhost:3000/profiles \
   -H "Content-Type: application/json" \
   -d '{"name":"Shop 1","url":"https://example.com"}'
+
+# 创建 Headless 采集 profile
+curl -X POST http://localhost:3000/profiles \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Collector 1","url":"https://example.com","browserMode":"headless"}'
 
 # 列表
 curl http://localhost:3000/profiles
@@ -83,7 +91,7 @@ curl -X POST http://localhost:3000/browsers/1/screenshot
 # 获取 cookies
 curl http://localhost:3000/browsers/1/cookies
 
-# 获取 noVNC 地址
+# 获取 noVNC 地址（仅 browserMode=vnc）
 curl http://localhost:3000/browsers/1/vnc
 ```
 
@@ -103,6 +111,8 @@ curl http://localhost:3000/browsers/1/vnc
 | `POST` | `/browsers/:id/screenshot` | 截图（base64） |
 | `GET` | `/browsers/:id/vnc` | noVNC 地址 |
 | `GET` | `/health` | 健康检查 |
+
+`/profiles` 和 `PUT /profiles/:id` 支持 `browserMode`：`vnc`（默认）或 `headless`。Headless profile 调用 VNC、剪贴板和文件上传接口会返回 `409`；导航、执行脚本、Cookie、页面操作和 CDP 截图仍然可用。
 
 ## 配置
 

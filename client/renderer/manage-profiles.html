@@ -50,6 +50,7 @@
   </div>
   <script>
     const typeLabels = { wechat_shop: '微信小店', miaoshou: '妙手', '1688': '1688', dianguanjia: '店管家', kuaishou_shop: '快手小店', generic: '通用' };
+    const browserModeLabels = { vnc: 'VNC 登录', headless: 'Headless 采集' };
     let profiles = [];
     let editingId = null;
 
@@ -70,6 +71,12 @@
       ).join('');
     }
 
+    function browserModeOptions(selected) {
+      return Object.entries(browserModeLabels).map(([v, l]) =>
+        `<option value="${v}" ${v === (selected || 'vnc') ? 'selected' : ''}>${l}</option>`
+      ).join('');
+    }
+
     function render() {
       const el = document.getElementById('list');
       if (profiles.length === 0) { el.innerHTML = '<div class="empty">暂无配置</div>'; return; }
@@ -80,6 +87,7 @@
             <div class="profile-info">
               <input id="en-${p.id}" value="${esc(p.name)}" placeholder="名称">
               <select id="et-${p.id}">${typeOptions(p.type)}</select>
+              <select id="em-${p.id}">${browserModeOptions(p.browserMode)}</select>
               <input id="eu-${p.id}" value="${esc(p.url||'')}" placeholder="URL">
               <input id="ek-${p.id}" type="number" value="${p.keepAliveInterval||0}" min="0" step="60" placeholder="保活间隔（秒）"
                 onkeypress="if(event.key==='Enter')save(${p.id})" onkeydown="if(event.key==='Escape'){editingId=null;render()}"
@@ -94,7 +102,7 @@
           <div class="profile-item">
             <div class="profile-info">
               <div class="profile-name">${esc(p.name)}</div>
-              <div class="profile-meta"><span class="type-tag">${typeLabels[p.type] || p.type || '通用'}</span>${p.keepAliveInterval ? `<span class="type-tag">保活 ${p.keepAliveInterval}s</span>` : ''}${esc(p.url||'未设置')}</div>
+              <div class="profile-meta"><span class="type-tag">${typeLabels[p.type] || p.type || '通用'}</span><span class="type-tag">${browserModeLabels[p.browserMode || 'vnc']}</span>${p.keepAliveInterval ? `<span class="type-tag">保活 ${p.keepAliveInterval}s</span>` : ''}${esc(p.url||'未设置')}</div>
             </div>
             <div class="profile-actions">
               <button class="btn-icon" onclick="editingId=${p.id};render()">&#9998;</button>
@@ -112,10 +120,11 @@
     async function save(id) {
       const name = document.getElementById(`en-${id}`).value.trim();
       const type = document.getElementById(`et-${id}`).value;
+      const browserMode = document.getElementById(`em-${id}`).value;
       const url = document.getElementById(`eu-${id}`).value.trim();
       const keepAliveInterval = parseInt(document.getElementById(`ek-${id}`).value) || 0;
       if (!name || !url) return;
-      await window.electronAPI.updateProfile(id, { name, type, url, keepAliveInterval });
+      await window.electronAPI.updateProfile(id, { name, type, browserMode, url, keepAliveInterval });
       editingId = null;
       await load();
     }

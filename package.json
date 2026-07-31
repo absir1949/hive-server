@@ -4,7 +4,8 @@
   "description": "Browser session pool server — manage isolated Chrome instances in Docker containers",
   "main": "server.js",
   "scripts": {
-    "server": "node server.js"
+    "server": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "dockerode": "^4.0.0",
