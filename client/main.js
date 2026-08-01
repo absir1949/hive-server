@@ -5,7 +5,7 @@ const { isInteractiveBrowser } = require('./sessionState');
 
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const SERVER = config.serverUrl;
-const VNC_BACKGROUND_TIMEOUT_MS = Number(config.vncBackgroundTimeoutMs) || 10 * 60 * 1000;
+const VNC_BACKGROUND_TIMEOUT_MS = Number(config.vncBackgroundTimeoutMs) || 5 * 60 * 1000;
 
 let tray = null;
 let quickPickerWindow = null;
