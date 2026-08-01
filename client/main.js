@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { isInteractiveBrowser } = require('./sessionState');
 
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const SERVER = config.serverUrl;
+const VNC_BACKGROUND_TIMEOUT_MS = Number(config.vncBackgroundTimeoutMs) || 10 * 60 * 1000;
 
 let tray = null;
 let quickPickerWindow = null;
@@ -53,6 +55,23 @@ function heartbeatVnc(profileId, leaseId) {
 
 function releaseVnc(profileId, leaseId) {
   return api('POST', `/browsers/${profileId}/vnc/release`, { leaseId });
+}
+
+async function releaseVncWithRetry(profileId, leaseId, attempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const result = await releaseVnc(profileId, leaseId);
+      if (result.ok) return result;
+      lastError = new Error(result.error || `VNC release failed with status ${result.status || 'unknown'}`);
+    } catch (err) {
+      lastError = err;
+    }
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+  throw lastError || new Error('VNC release failed');
 }
 
 async function waitForVnc(url, timeoutMs = 20000) {
@@ -183,6 +202,50 @@ async function openVnc(profileId, profileName) {
 
   // Hold a short-lived VNC lease while the client window is open. If the
   // client crashes, the server releases the lease after the heartbeat TTL.
+  let backgroundTimer = null;
+  let releasePromise = null;
+
+  function clearBackgroundTimer() {
+    if (backgroundTimer) {
+      clearTimeout(backgroundTimer);
+      backgroundTimer = null;
+    }
+  }
+
+  function cancelBackgroundRelease() {
+    clearBackgroundTimer();
+  }
+
+  function scheduleBackgroundRelease() {
+    clearBackgroundTimer();
+    backgroundTimer = setTimeout(async () => {
+      backgroundTimer = null;
+      console.log(`[VNC] ${profileId} window stayed in background for ${VNC_BACKGROUND_TIMEOUT_MS / 1000}s; releasing lease`);
+      try {
+        await releaseLease('background timeout');
+      } finally {
+        if (!win.isDestroyed()) win.close();
+      }
+    }, VNC_BACKGROUND_TIMEOUT_MS);
+  }
+
+  async function releaseLease(reason) {
+    if (!releasePromise) {
+      clearBackgroundTimer();
+      clearInterval(heartbeatInterval);
+      releasePromise = releaseVncWithRetry(profileId, leaseId)
+        .then((result) => {
+          console.log(`[VNC] ${profileId} lease released (${reason}): ${result.status || 'stopped'}`);
+          return result;
+        })
+        .catch((err) => {
+          console.error(`[VNC] ${profileId} lease release failed after retry:`, err.message);
+          throw err;
+        });
+    }
+    return releasePromise;
+  }
+
   const heartbeatInterval = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(heartbeatInterval);
@@ -199,13 +262,19 @@ async function openVnc(profileId, profileName) {
     });
   }, 30 * 1000);
 
+  win.on('focus', cancelBackgroundRelease);
+  win.on('show', cancelBackgroundRelease);
+  win.on('restore', cancelBackgroundRelease);
+  win.on('blur', scheduleBackgroundRelease);
+  win.on('hide', scheduleBackgroundRelease);
+  win.on('minimize', scheduleBackgroundRelease);
+
   win.on('closed', () => {
-    clearInterval(heartbeatInterval);
-    releaseVnc(profileId, leaseId).catch((err) => {
-      console.error('[VNC] lease release failed:', err.message);
-    });
     vncWindows.delete(String(profileId));
     updateTrayMenu();
+    releaseLease('window closed')
+      .catch(() => {})
+      .finally(() => updateTrayMenu());
   });
 }
 
@@ -259,7 +328,8 @@ async function updateTrayMenu() {
   }
 
   const runningByProfile = new Map(
-    browsers.filter(b => b.status === 'running').map(b => [String(b.profileId), b]),
+    browsers.filter(isInteractiveBrowser)
+      .map(b => [String(b.profileId), b]),
   );
 
   const running = profiles.filter(p => runningByProfile.has(String(p.id)));
@@ -448,7 +518,9 @@ ipcMain.handle('profile:getAll', async () => {
   );
   return profiles.map(p => ({
     ...p,
-    isRunning: activeBrowsers.has(String(p.id)),
+    // The client menu represents interactive VNC windows. Headless containers
+    // belong to Center/AI collection and should not appear as "running" here.
+    isRunning: isInteractiveBrowser(activeBrowsers.get(String(p.id))),
     activeBrowserMode: activeBrowsers.get(String(p.id))?.browserMode || null,
   }));
 });

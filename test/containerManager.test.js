@@ -59,3 +59,44 @@ test('VNC containers keep the noVNC port binding', async () => {
     '6080/tcp': [{ HostPort: '6117' }],
   });
 });
+
+test('recover removes running VNC containers without a restorable lease', async () => {
+  const stopped = [];
+  const docker = {
+    async listContainers() {
+      return [
+        {
+          Names: ['/hive-4'],
+          State: 'running',
+          Id: 'vnc-container',
+          Ports: [
+            { PrivatePort: 9222, PublicPort: 9304 },
+            { PrivatePort: 6080, PublicPort: 6104 },
+          ],
+          Labels: { 'hive.browserMode': 'vnc' },
+        },
+        {
+          Names: ['/hive-5'],
+          State: 'running',
+          Id: 'headless-container',
+          Ports: [{ PrivatePort: 9222, PublicPort: 9305 }],
+          Labels: { 'hive.browserMode': 'headless' },
+        },
+      ];
+    },
+    getContainer(name) {
+      return {
+        async stop() { stopped.push(`stop:${name}`); },
+        async remove() { stopped.push(`remove:${name}`); },
+      };
+    },
+  };
+  const manager = new ContainerManager({ docker });
+
+  const recovered = await manager.recover();
+
+  assert.deepEqual(recovered, ['5']);
+  assert.deepEqual(stopped, ['stop:hive-4', 'remove:hive-4']);
+  assert.equal(manager.containers.has('4'), false);
+  assert.equal(manager.containers.get('5').browserMode, 'headless');
+});

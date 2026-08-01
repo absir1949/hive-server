@@ -103,7 +103,7 @@ POST /browsers/:id/vnc/release      释放 VNC，按需恢复 Headless
 
 ## 服务器重启
 
-Hive Browser Server 重启时，正在跑的 Docker 容器不受影响。Server 重新扫描运行中的容器，通过 CDP 重连。零中断。
+Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 重连。VNC 租约保存在服务端内存中，无法安全恢复；服务重启会清理没有可恢复租约的旧 VNC 容器，客户端需要重新打开 VNC。
 
 ## 规模
 

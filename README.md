@@ -22,7 +22,7 @@ Linux 服务器
 
 - **默认 Headless** — 普通 API 和后台保活按需启动 Headless，不启动桌面和 noVNC
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
-- **客户端 VNC 租约** — 只有 Electron 客户端打开 VNC；关闭窗口或心跳超时后释放
+- **客户端 VNC 租约** — 只有 Electron 客户端打开 VNC；关闭窗口、后台超过 10 分钟或心跳超时后释放
 - **双运行模式** — 同一 Profile 可在 Headless 和 VNC 之间切换，但两个 Chrome 不会同时运行
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
@@ -132,6 +132,8 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `GET` | `/health` | 健康检查 |
 
 `browserMode` 不属于 Profile。普通导航、脚本、Cookie、页面和截图接口默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 租约默认 2 分钟未收到心跳就释放，可通过 `VNC_LEASE_TTL_MS` 调整。
+
+Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 10 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 
 ## 配置
 
