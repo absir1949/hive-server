@@ -2,9 +2,24 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, cl
 const path = require('path');
 const fs = require('fs');
 const { isInteractiveBrowser } = require('./sessionState');
+const { normalizeServerUrl } = require('./configUtils');
 
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-const SERVER = config.serverUrl;
+// Config lives in userData (writable) so it survives packing into app.asar (read-only).
+// On first run we seed it from the bundled default config.json next to main.js.
+function loadConfig() {
+  const userConfigPath = path.join(app.getPath('userData'), 'config.json');
+  try {
+    return JSON.parse(fs.readFileSync(userConfigPath, 'utf8'));
+  } catch {
+    // First run: copy the bundled default into userData so it becomes writable.
+    const defaultConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+    try { fs.writeFileSync(userConfigPath, JSON.stringify(defaultConfig, null, 2)); } catch {}
+    return defaultConfig;
+  }
+}
+
+const config = loadConfig();
+let SERVER = config.serverUrl || '';
 const VNC_BACKGROUND_TIMEOUT_MS = Number(config.vncBackgroundTimeoutMs) || 5 * 60 * 1000;
 
 let tray = null;
@@ -319,8 +334,11 @@ async function updateTrayMenu() {
   try {
     [profiles, browsers] = await Promise.all([getProfiles(), getBrowsers()]);
   } catch (e) {
+    const unconfigured = !SERVER;
     tray.setContextMenu(Menu.buildFromTemplate([
-      { label: `Server 离线 (${SERVER})`, enabled: false },
+      { label: unconfigured ? '未配置服务器' : `Server 离线 (${SERVER})`, enabled: false },
+      { type: 'separator' },
+      { label: unconfigured ? '添加服务器地址...' : '修改服务器地址...', click: showServerSettingsDialog },
       { type: 'separator' },
       { label: '退出', click: () => app.quit() },
     ]));
@@ -480,12 +498,29 @@ ipcMain.handle('server:getUrl', async () => {
 });
 
 ipcMain.handle('server:setUrl', async (_, newUrl) => {
-  const configPath = path.join(__dirname, 'config.json');
+  let normalizedUrl;
+  try {
+    normalizedUrl = normalizeServerUrl(newUrl);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
+  for (const [profileId, win] of vncWindows) {
+    if (win.isDestroyed()) {
+      vncWindows.delete(profileId);
+    } else {
+      return { ok: false, error: '请先关闭 VNC 窗口，再修改服务器地址' };
+    }
+  }
+
+  const configPath = path.join(app.getPath('userData'), 'config.json');
   const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  cfg.serverUrl = newUrl;
+  cfg.serverUrl = normalizedUrl;
   fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-  // Note: requires restart to take effect (SERVER is read at startup)
-  return { ok: true, restart: true };
+  config.serverUrl = normalizedUrl;
+  SERVER = normalizedUrl;
+  updateTrayMenu();
+  return { ok: true, serverUrl: normalizedUrl };
 });
 
 ipcMain.handle('profile:add', async (_, name, url, type, keepAlive) => {

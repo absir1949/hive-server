@@ -26,6 +26,7 @@
     .btn-cancel { background: #fff; color: #1d1d1f; border: 1px solid #d2d2d7; }
     .btn-cancel:hover { background: #f0f0f0; }
     .hint { font-size: 11px; color: #86868b; margin-top: 8px; }
+    .error { min-height: 16px; margin-top: 6px; color: #ff3b30; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -34,7 +35,8 @@
       <label for="url">服务器地址</label>
       <input type="text" id="url" placeholder="http://192.168.1.100:37568">
     </div>
-    <div class="hint">修改后需重启客户端生效</div>
+    <div class="hint">保存后立即生效；如有 VNC 窗口，请先关闭</div>
+    <div class="error" id="error"></div>
     <div class="buttons">
       <button class="btn-cancel" onclick="window.close()">取消</button>
       <button class="btn-primary" onclick="save()">保存</button>
@@ -48,7 +50,18 @@
     async function save() {
       const url = document.getElementById('url').value.trim();
       if (!url) return document.getElementById('url').focus();
-      await window.electronAPI.setServerUrl(url);
+      const error = document.getElementById('error');
+      error.textContent = '';
+      try {
+        const result = await window.electronAPI.setServerUrl(url);
+        if (!result || !result.ok) {
+          error.textContent = result?.error || '保存失败';
+          return;
+        }
+      } catch (e) {
+        error.textContent = e.message || '保存失败';
+        return;
+      }
       window.close();
     }
     document.getElementById('url').addEventListener('keypress', e => {
