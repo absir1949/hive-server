@@ -219,6 +219,7 @@ async function openVnc(profileId, profileName) {
   // client crashes, the server releases the lease after the heartbeat TTL.
   let backgroundTimer = null;
   let releasePromise = null;
+  let allowWindowClose = false;
 
   function clearBackgroundTimer() {
     if (backgroundTimer) {
@@ -236,10 +237,11 @@ async function openVnc(profileId, profileName) {
     backgroundTimer = setTimeout(async () => {
       backgroundTimer = null;
       console.log(`[VNC] ${profileId} window stayed in background for ${VNC_BACKGROUND_TIMEOUT_MS / 1000}s; releasing lease`);
-      try {
-        await releaseLease('background timeout');
-      } finally {
-        if (!win.isDestroyed()) win.close();
+      const released = await closeAfterRelease('background timeout');
+      if (!released) {
+        // Keep the lease and heartbeat alive when the server cannot release it.
+        // A later retry avoids leaving a hidden window orphaned permanently.
+        scheduleBackgroundRelease();
       }
     }, VNC_BACKGROUND_TIMEOUT_MS);
   }
@@ -247,18 +249,33 @@ async function openVnc(profileId, profileName) {
   async function releaseLease(reason) {
     if (!releasePromise) {
       clearBackgroundTimer();
-      clearInterval(heartbeatInterval);
       releasePromise = releaseVncWithRetry(profileId, leaseId)
         .then((result) => {
+          clearInterval(heartbeatInterval);
           console.log(`[VNC] ${profileId} lease released (${reason}): ${result.status || 'stopped'}`);
           return result;
         })
         .catch((err) => {
+          // Keep sending heartbeats so a transient network failure does not
+          // turn a still-open VNC window into an orphaned lease.
+          releasePromise = null;
           console.error(`[VNC] ${profileId} lease release failed after retry:`, err.message);
           throw err;
         });
     }
     return releasePromise;
+  }
+
+  async function closeAfterRelease(reason) {
+    try {
+      await releaseLease(reason);
+    } catch {
+      return false;
+    }
+
+    allowWindowClose = true;
+    if (!win.isDestroyed()) win.close();
+    return true;
   }
 
   const heartbeatInterval = setInterval(() => {
@@ -284,12 +301,24 @@ async function openVnc(profileId, profileName) {
   win.on('hide', scheduleBackgroundRelease);
   win.on('minimize', scheduleBackgroundRelease);
 
+  // Do not let the Electron window disappear before the server has stopped
+  // Chrome and restored Headless. Center can otherwise observe the old VNC
+  // lease during the mode transition and report a false login failure.
+  win.on('close', (event) => {
+    if (allowWindowClose) return;
+    event.preventDefault();
+    closeAfterRelease('window closing').then((released) => {
+      if (!released) updateTrayMenu();
+    });
+  });
+
   win.on('closed', () => {
     vncWindows.delete(String(profileId));
     updateTrayMenu();
-    releaseLease('window closed')
-      .catch(() => {})
-      .finally(() => updateTrayMenu());
+    if (!allowWindowClose) {
+      // Fallback for programmatic destruction or an unexpected close path.
+      releaseLease('window closed').catch(() => {}).finally(() => updateTrayMenu());
+    }
   });
 }
 
