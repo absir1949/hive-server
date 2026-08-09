@@ -17,8 +17,8 @@ Linux 服务器
 │                                                     │
 │  Docker 容器 × N（按需启动）                          │
 │  ┌──────────────────────────────────────────────┐    │
-│  │ 一个 Profile 可按会话选择 VNC 或 Headless      │    │
-│  │ Profile 数据持久化，运行模式不写入 Profile     │    │
+│  │ 一个 Profile 同时只运行一个 Chromium          │    │
+│  │ VNC 前台 + 最小化后台采集窗口                 │    │
 │  └──────────────────────────────────────────────┘    │
 │                                                     │
 │  Docker Compose 编排                                 │
@@ -33,13 +33,13 @@ Linux 服务器
 
 ## 三层分工
 
-### 第一层：Chrome 运行环境（现成，不自己造）
+### 第一层：Chrome 运行环境
 
-用现成的 Docker 镜像（如 `kasmweb/chrome` 或基于 `selenium/standalone-chrome` 改造），每个容器按启动会话时传入的 `browserMode` 选择运行链路：
-- `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，启动 VNC/noVNC 和 CDP
+使用项目内 `docker/` 构建的 `hive-chrome` 镜像，每个容器按启动会话时传入的 `browserMode` 选择运行链路：
+- `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，提供 CDP；VNC/noVNC 控制通道由租约按需启停
 - `headless`：Chromium 使用 `--headless=new`，只启动 CDP，不启动桌面、输入法和 noVNC
 
-每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 Profile 的 VNC 和 Headless 容器不能同时打开同一数据目录，切换会话模式时服务端会先停止旧容器。
+每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 Profile 的 VNC 和 Headless 容器不能同时打开同一数据目录。
 
 ### 第二层：Hive Browser Server（我们的核心）
 
@@ -50,15 +50,17 @@ Node.js 服务，职责：
 - **HTTP API**：对外提供 navigate / execute / cookies / screenshot 等操作
 - **容器调度**：按需启动/关闭 Docker 容器，不用的容器关掉省资源
 - **运行模式**：按浏览器会话选择 VNC 登录或 Headless 采集，不写入 Profile
-- **CDP 连接**：通过 Puppeteer 连接到容器里的 Chrome，执行自动化操作
+- **CDP 连接**：通过原生 CDP HTTP/WebSocket 操作 Chrome，不依赖页面焦点
+- **后台采集窗口**：在同一 BrowserContext 创建最小化、不聚焦的独立窗口，共享 Cookie 和站点存储
+- **VNC 租约**：申请时启动 noVNC/x11vnc，释放或过期时停止控制通道并断开已有连接
 
 ### 第三层：客户端（纯消费者）
 
 - **Center**：Web 管理面板，调 API 查看状态、触发操作
-- **人工操作**：启动 VNC 会话后通过 noVNC 地址直接操作服务器上的 Chrome
+- **Electron 客户端**：申请并维持 VNC 租约，展示 noVNC 窗口，关闭时先释放租约
 - **AI**：直接调 HTTP API，默认按需启动 Headless 做自动化
 
-不需要 Mac 客户端应用。只有 Electron 客户端可以申请 VNC 租约；Headless 会话没有 VNC 地址，只通过 API/CDP 使用。
+只有 Electron 客户端申请 VNC 租约；Headless 会话没有 VNC 地址，只通过 API/CDP 使用。
 
 ## API 设计
 
@@ -71,12 +73,16 @@ POST /browsers/:id/navigate         导航到 URL（自动启动容器）
 POST /browsers/:id/execute          执行 JS
 GET  /browsers/:id/cookies          获取 cookie
 POST /browsers/:id/screenshot       截图
+POST /browsers/:id/pages/new        创建最小化后台采集窗口
+POST /browsers/:id/pages/:pageId/execute    在后台窗口执行 JS
+POST /browsers/:id/pages/:pageId/screenshot 截取后台窗口
+POST /browsers/:id/pages/:pageId/close      关闭后台窗口
 GET  /browsers/:id/vnc              获取 VNC 租约并返回 noVNC 地址
 POST /browsers/:id/vnc/heartbeat    刷新 VNC 租约
-POST /browsers/:id/vnc/release      释放 VNC，按需恢复 Headless
+POST /browsers/:id/vnc/release      撤销 VNC 控制并保留 Chromium 到空闲回收
 ```
 
-采集调用方直接调用 navigate / execute 等接口即可，服务端默认按需启动 Headless。Electron 客户端调用 `/vnc` 时，服务端先停止 Headless，再使用同一个 Profile 数据目录启动 VNC。客户端关闭窗口或 VNC 心跳超时后释放租约；如果打开 VNC 前确实有 Headless 会话，则自动恢复 Headless，否则保持停止。
+采集冷启动默认使用 Headless。已有 VNC Chromium 时，采集通过 `/pages/*` 创建同 BrowserContext 的后台窗口，不启动第二个进程。VNC 活跃期间，旧 `navigate`、`execute` 和主页面全页截图不会操作人工前台。客户端关闭窗口或心跳超时后，服务端先停止 noVNC/x11vnc、断开现有远程连接，再删除租约；Chromium 本身继续服务连续采集，空闲 5 分钟后停止。
 
 ## Chrome 生命周期
 
@@ -88,17 +94,20 @@ POST /browsers/:id/vnc/release      释放 VNC，按需恢复 Headless
     │
     ▼  API 主动 navigate 到 profile 配置的 URL
     │
-    ▼  Puppeteer 通过 CDP 连接
+    ▼  原生 CDP WebSocket 连接
 执行操作 → 返回结果
     │
     ▼  持续有 API 调用：保持运行
-    ▼  空闲超时（如 10 分钟）：关闭容器，数据保留
+    ▼  空闲超时（默认 5 分钟）：关闭容器，数据保留
     │
     ▼  Electron 客户端申请人工操作
-停止 Headless → 启动 VNC → noVNC 连接
+无采集窗口时：停止 Headless → 启动 VNC → 启用 noVNC 控制通道
+    │
+    ▼  VNC 期间有采集任务
+同一 Chromium 创建最小化后台窗口 → 完成后立即关闭
     │
     ▼  客户端关闭或租约超时
-释放 VNC → 有 Headless 任务则恢复 Headless，否则保持停止
+停止 noVNC/x11vnc → 保留 Chromium → 连续采集复用 / 空闲 5 分钟后停止
 ```
 
 ## 服务器重启
@@ -107,7 +116,7 @@ Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 
 
 ## 规模
 
-- 当前 13 个账号：Docker Compose 足够
+- 当前几十个账号：Docker Compose 足够
 - 100 个账号：Docker Compose 仍然足够，同时在跑的可能只有 5-10 个
 - 更大规模：考虑 Kubernetes
 
@@ -115,17 +124,15 @@ Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 
 
 | 模块 | 复用情况 |
 |------|----------|
-| 指纹生成 (`lib/fingerprintGenerator.js`) | 直接复用 |
-| 代理管理 (`lib/proxyManager.js`) | 直接复用 |
-| 输入校验 (`lib/inputValidator.js`) | 直接复用 |
-| Chrome 参数构建 (`src/platform/base.js`) | 复用 `buildChromeArgs`、`generateProfileExtension` |
-| HTTP API (`httpServer.js`) | 改造：底层从 windowManager 换成 Docker 容器管理 |
-| Profile 管理 | 改造：去掉 Electron 依赖 |
-| Electron 客户端代码 | 不再需要（noVNC 替代） |
+| `lib/containerManager.js` | Docker 容器及 VNC 控制通道生命周期 |
+| `lib/browserConnector.js` | 原生 CDP 连接与后台采集窗口 |
+| `lib/api.js` | Profile 锁、VNC 租约、空闲回收和 HTTP API |
+| `lib/profileStore.js` | 通用 Profile 数据，不持久化运行模式 |
+| `client/` | Electron 菜单栏客户端及 VNC 窗口 |
 
 ## 不做的事
 
 - 不用 Browserless（许可证限制，场景不匹配）
 - 不用 WebRTC（复杂，noVNC 够用）
-- 不做 cookie 同步（同一个浏览器实例，不需要同步）
-- 不做 Mac 原生客户端（noVNC 网页替代）
+- 不启动两个 Chromium 共享或复制同一 Profile
+- 不做 Cookie 同步（同一个浏览器实例和 BrowserContext，不需要同步）

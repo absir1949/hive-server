@@ -100,3 +100,39 @@ test('recover removes running VNC containers without a restorable lease', async 
   assert.equal(manager.containers.has('4'), false);
   assert.equal(manager.containers.get('5').browserMode, 'headless');
 });
+
+test('VNC access can be revoked and restored without stopping Chromium', async () => {
+  const commands = [];
+  const manager = new ContainerManager({ docker: {} });
+  manager.containers.set('4', {
+    containerId: 'vnc-container',
+    cdpPort: 9304,
+    vncPort: 6104,
+    browserMode: 'vnc',
+  });
+  manager.execInContainer = async (profileId, command) => {
+    commands.push([profileId, command]);
+  };
+
+  await manager.disableVncAccess('4');
+  await manager.enableVncAccess('4');
+
+  assert.deepEqual(commands, [
+    ['4', ['/usr/local/bin/hive-vnc-control', 'stop']],
+    ['4', ['/usr/local/bin/hive-vnc-control', 'start']],
+  ]);
+  assert.equal(manager.containers.has('4'), true);
+});
+
+test('graceful shutdown revokes access for tracked VNC containers', async () => {
+  const revoked = [];
+  const manager = new ContainerManager({ docker: {} });
+  manager.containers.set('4', { browserMode: 'vnc' });
+  manager.containers.set('5', { browserMode: 'headless' });
+  manager.disableVncAccess = async (profileId) => revoked.push(profileId);
+
+  await manager.shutdown();
+
+  assert.deepEqual(revoked, ['4']);
+  assert.equal(manager.containers.size, 0);
+});

@@ -36,6 +36,7 @@ EXPOSE 9222 6080
 VOLUME /data
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY vnc-control.sh /usr/local/bin/hive-vnc-control
+RUN chmod +x /entrypoint.sh /usr/local/bin/hive-vnc-control
 
 ENTRYPOINT ["/entrypoint.sh"]

@@ -278,6 +278,14 @@ async function openVnc(profileId, profileName) {
     return true;
   }
 
+  function closeAfterLeaseLoss(error) {
+    clearInterval(heartbeatInterval);
+    clearBackgroundTimer();
+    allowWindowClose = true;
+    console.error('[VNC] lease is no longer valid:', error);
+    if (!win.isDestroyed()) win.close();
+  }
+
   const heartbeatInterval = setInterval(() => {
     if (win.isDestroyed()) {
       clearInterval(heartbeatInterval);
@@ -285,11 +293,11 @@ async function openVnc(profileId, profileName) {
     }
     heartbeatVnc(profileId, leaseId).then((result) => {
       if (!result.ok) {
-        clearInterval(heartbeatInterval);
-        console.error('[VNC] lease heartbeat failed:', result.error);
+        closeAfterLeaseLoss(result.error || 'heartbeat rejected');
       }
     }).catch((err) => {
-      clearInterval(heartbeatInterval);
+      // Keep retrying on transport failures. If the server cannot receive
+      // heartbeats, its lease timer will revoke the noVNC connection.
       console.error('[VNC] lease heartbeat failed:', err.message);
     });
   }, 30 * 1000);
@@ -301,9 +309,9 @@ async function openVnc(profileId, profileName) {
   win.on('hide', scheduleBackgroundRelease);
   win.on('minimize', scheduleBackgroundRelease);
 
-  // Do not let the Electron window disappear before the server has stopped
-  // Chrome and restored Headless. Center can otherwise observe the old VNC
-  // lease during the mode transition and report a false login failure.
+  // Do not let the Electron window disappear before the server has released
+  // the interactive lease. Chrome stays alive for background collection and
+  // is reclaimed later by the server's idle timeout.
   win.on('close', (event) => {
     if (allowWindowClose) return;
     event.preventDefault();
@@ -388,10 +396,9 @@ async function updateTrayMenu() {
   if (running.length > 0) {
     menuTemplate.push({ label: '运行中', enabled: false });
     for (const p of running) {
-      const browser = runningByProfile.get(String(p.id));
       const hasWindow = vncWindows.has(String(p.id)) && !vncWindows.get(String(p.id)).isDestroyed();
       menuTemplate.push({
-        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}${browser.browserMode === 'headless' ? '（采集中）' : ''}`,
+        label: `  🟢 ${p.name}${hasWindow ? ' ●' : ''}`,
         click: () => openVnc(p.id, p.name),
       });
     }
@@ -580,13 +587,17 @@ ipcMain.handle('profile:getAll', async () => {
   const activeBrowsers = new Map(
     browsers.filter(b => b.status === 'running').map(b => [String(b.profileId), b]),
   );
-  return profiles.map(p => ({
-    ...p,
-    // The client menu represents interactive VNC windows. Headless containers
-    // belong to Center/AI collection and should not appear as "running" here.
-    isRunning: isInteractiveBrowser(activeBrowsers.get(String(p.id))),
-    activeBrowserMode: activeBrowsers.get(String(p.id))?.browserMode || null,
-  }));
+  return profiles.map((p) => {
+    const browser = activeBrowsers.get(String(p.id));
+    const isRunning = isInteractiveBrowser(browser);
+    return {
+      ...p,
+      // The client represents active VNC leases. Background collection and a
+      // released VNC runtime waiting for idle cleanup are both shown as idle.
+      isRunning,
+      activeBrowserMode: isRunning ? 'vnc' : null,
+    };
+  });
 });
 
 ipcMain.handle('profile:startOrActivate', async (_, profileId) => {

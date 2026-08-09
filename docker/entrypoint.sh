@@ -114,11 +114,7 @@ fi
 socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
 
 if [ "$BROWSER_MODE" = "vnc" ]; then
-  # --- x11vnc + noVNC ---
-  x11vnc -display :1 -forever -nopw -rfbport 5900 -q &
-  sleep 1
-  websockify --web /usr/share/novnc 6080 localhost:5900 &
-  echo "Hive Chrome ready — mode: vnc, CDP :9222, noVNC :6080"
+  echo "Hive Chrome ready — mode: vnc, CDP :9222, noVNC awaiting lease"
 else
   echo "Hive Chrome ready — mode: headless, CDP :9222"
 fi
@@ -128,6 +124,9 @@ fi
 # flushed before the container is removed and the next mode starts.
 shutdown_chrome() {
   trap - TERM INT
+  if [ "$BROWSER_MODE" = "vnc" ]; then
+    /usr/local/bin/hive-vnc-control stop || true
+  fi
   if kill -0 "$CHROME_PID" 2>/dev/null; then
     kill -TERM "$CHROME_PID" 2>/dev/null || true
     wait "$CHROME_PID" || true

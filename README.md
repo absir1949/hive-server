@@ -14,19 +14,20 @@ Linux 服务器
 │                                             │
 │  Docker 容器 × N（按需启动）                 │
 │  ┌──────────────────────────────────────┐   │
-│  │ 一个 Profile 可先 VNC、再 Headless     │   │
-│  │ Profile 数据持久化，运行模式属于会话   │   │
+│  │ 一个 Profile 只运行一个 Chrome       │   │
+│  │ VNC 前台 + CDP 后台采集窗口          │   │
 │  └──────────────────────────────────────┘   │
 └─────────────────────────────────────────────┘
 ```
 
 - **默认 Headless** — 普通 API 和后台保活按需启动 Headless，不启动桌面和 noVNC
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
-- **客户端 VNC 租约** — 只有 Electron 客户端打开 VNC；关闭窗口、后台超过 5 分钟或心跳超时后释放
-- **双运行模式** — 同一 Profile 可在 Headless 和 VNC 之间切换，但两个 Chrome 不会同时运行
+- **后台采集窗口** — VNC 开启时，采集复用同一 Chrome；窗口创建时即最小化且不抢焦点
+- **客户端 VNC 租约** — 关闭窗口、后台超过 5 分钟或心跳超时后停止 noVNC/x11vnc，并断开已有控制连接
+- **空闲回收** — VNC 释放后不重启 Chrome；连续采集直接复用，整体空闲 5 分钟后再停止
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
-同一个 Profile 的用户目录不能同时被 VNC 和 Headless 两个 Chrome 进程打开。切换时服务端会先停止旧容器，再按新模式启动；不复制 Profile，也不需要手动同步 Cookie，登录态和数据目录保持不变。
+同一个 Profile 的用户目录不会被两个 Chrome 进程同时打开。Headless 存在未完成的后台采集窗口时，服务端会拒绝打开 VNC，避免中途停掉任务；VNC 关闭后则保留当前 Chrome 到空闲回收。采集窗口使用默认 BrowserContext，因此与 VNC 窗口共享 Cookie、LocalStorage 和 IndexedDB，不需要复制 Profile 或手动同步登录态。
 
 ## 快速开始
 
@@ -67,7 +68,7 @@ curl http://localhost:3000/profiles
 
 ### 浏览器操作
 
-普通操作会自动启动 Headless Chrome，调用方不需要传运行模式。也可以显式启动 Headless 会话：
+普通操作在冷启动时会自动启动 Headless Chrome；如果 VNC Chrome 已在运行，则直接复用它。调用方不需要传运行模式。也可以显式启动 Headless 会话：
 
 ```bash
 # 显式启动 Headless 会话（通常直接调用 navigate 即可）
@@ -101,7 +102,7 @@ curl -X POST http://localhost:3000/browsers/1/vnc/heartbeat \
   -H "Content-Type: application/json" \
   -d '{"leaseId":"<leaseId>"}'
 
-# 客户端关闭窗口后释放 VNC；之前有 Headless 会话时会自动恢复
+# 客户端关闭窗口后释放 VNC；Chrome 保留到整体空闲超时
 curl -X POST http://localhost:3000/browsers/1/vnc/release \
   -H "Content-Type: application/json" \
   -d '{"leaseId":"<leaseId>"}'
@@ -126,12 +127,16 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `POST` | `/browsers/:id/execute` | 执行 JS |
 | `GET` | `/browsers/:id/cookies` | 全量 cookies |
 | `POST` | `/browsers/:id/screenshot` | 截图（base64） |
+| `POST` | `/browsers/:id/pages/new` | 创建共享登录态的最小化后台窗口 |
+| `POST` | `/browsers/:id/pages/:pageId/execute` | 在指定后台采集页执行 JS |
+| `POST` | `/browsers/:id/pages/:pageId/screenshot` | 截取指定后台采集页 |
+| `POST` | `/browsers/:id/pages/:pageId/close` | 关闭后台窗口并释放 CDP 会话 |
 | `GET` | `/browsers/:id/vnc` | 获取 VNC 租约和 noVNC 地址 |
 | `POST` | `/browsers/:id/vnc/heartbeat` | 刷新 VNC 租约 |
-| `POST` | `/browsers/:id/vnc/release` | 释放 VNC 并按需恢复 Headless |
+| `POST` | `/browsers/:id/vnc/release` | 停止 VNC 控制通道，Chromium 留待采集或空闲回收 |
 | `GET` | `/health` | 健康检查 |
 
-`browserMode` 不属于 Profile。普通导航、脚本、Cookie、页面和截图接口默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 租约默认 2 分钟未收到心跳就释放，可通过 `VNC_LEASE_TTL_MS` 调整。
+`browserMode` 不属于 Profile。冷启动采集默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 存在时，采集应使用 `/pages/*` 后台窗口；主页导航、旧 `/execute` 脚本和主页全页截图会被拒绝，避免打断人工操作。VNC 租约默认 2 分钟未收到心跳就撤销控制通道，可通过 `VNC_LEASE_TTL_MS` 调整。
 
 Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 5 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 
@@ -140,7 +145,7 @@ Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
 | `PORT` | `3000` | 服务端口 |
-| `IDLE_TIMEOUT_MS` | `600000` | 空闲超时（ms），默认 10 分钟 |
+| `IDLE_TIMEOUT_MS` | `300000` | 空闲超时（ms），默认 5 分钟 |
 | `VNC_LEASE_TTL_MS` | `120000` | VNC 心跳租约超时（ms），默认 2 分钟 |
 | `HOST_DATA_DIR` | `./data` | 数据���录（Docker 部署时需设为宿主机绝对路���） |
 
