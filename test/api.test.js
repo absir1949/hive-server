@@ -128,6 +128,28 @@ test('start selects a runtime mode while the profile remains generic', async () 
   }
 });
 
+test('system profiles cannot be modified or deleted', async () => {
+  const { server } = await startApi({ profile: { id: 'render', name: '系统渲染', type: 'render', system: true } });
+  try {
+    const listResponse = await request(server, '/profiles');
+    assert.deepEqual((await listResponse.json()).profiles, []);
+
+    const renderListResponse = await request(server, '/profiles?type=render');
+    assert.equal((await renderListResponse.json()).profiles[0].id, 'render');
+
+    const updateResponse = await request(server, '/profiles/render', {
+      method: 'PUT',
+      body: { name: 'changed' },
+    });
+    assert.equal(updateResponse.status, 409);
+
+    const deleteResponse = await request(server, '/profiles/render', { method: 'DELETE' });
+    assert.equal(deleteResponse.status, 409);
+  } finally {
+    await closeApi(server);
+  }
+});
+
 test('browser operations reuse the selected runtime mode', async () => {
   const startedModes = [];
   const { server } = await startApi({ onStart: (_, options) => startedModes.push(options.browserMode) });

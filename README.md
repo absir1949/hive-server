@@ -56,6 +56,9 @@ docker compose up -d
 
 ### Profile 管理
 
+Hive Server 启动时会自动确保一个固定 ID 为 `render`、类型为 `render` 的系统渲染 Profile。
+它不出现在默认 Profile 列表中；可通过 `GET /profiles?type=render` 查询，Center 直接使用固定 ID，无需另配。
+
 ```bash
 # 创建通用 Profile（不绑定浏览器运行模式）
 curl -X POST http://localhost:3000/profiles \
