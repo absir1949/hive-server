@@ -27,7 +27,7 @@ Linux 服务器
 - **持久认证会话** — 已启动的 Chromium 不做空闲回收，VNC 释放后继续服务采集和保活
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
-同一个 Profile 的用户目录不会被两个 Chrome 进程同时打开。已运行模式与新请求不一致时，服务端返回 `409`，不会隐式停止并重启 Chromium。采集窗口使用默认 BrowserContext，因此与 VNC 窗口共享 Cookie、LocalStorage 和 IndexedDB，不需要复制 Profile 或手动同步登录态。
+同一个 Profile 的用户目录不会被两个 Chrome 进程同时打开。后台 API 的模式请求不一致时返回 `409`，不会隐式重启 Chromium；用户显式打开 VNC 时，服务端在确认没有后台采集页后，可以受控地将 Headless 切换为 VNC。采集窗口使用默认 BrowserContext，因此与 VNC 窗口共享 Cookie、LocalStorage 和 IndexedDB。
 
 ## 快速开始
 
@@ -124,7 +124,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `PUT` | `/profiles/:id` | 修改 |
 | `DELETE` | `/profiles/:id` | 删除（自动停容器） |
 | `GET` | `/browsers` | 所有容器状态 |
-| `POST` | `/browsers/:id/start` | 显式启动或切换浏览器会话（默认 `headless`） |
+| `POST` | `/browsers/:id/start` | 显式启动浏览器会话（默认 `headless`；显式 VNC 可受控切换） |
 | `POST` | `/browsers/:id/stop` | 停止当前浏览器会话，保留 Profile 数据 |
 | `POST` | `/browsers/:id/navigate` | 导航 |
 | `POST` | `/browsers/:id/execute` | 执行 JS |
@@ -141,7 +141,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 
 `browserMode` 不属于 Profile。冷启动采集默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 存在时，采集应使用 `/pages/*` 后台窗口；主页导航、旧 `/execute` 脚本和主页全页截图会被拒绝，避免打断人工操作。VNC 租约默认 2 分钟未收到心跳就撤销控制通道，可通过 `VNC_LEASE_TTL_MS` 调整。
 
-已启动的 Chromium 被视为持久认证会话：不空闲回收，不因单次 API/CDP 连接失败重启，也不隐式切换 `browserMode`。只有显式 `POST /browsers/:id/stop` 或删除 Profile 才会停止它。保活只对已运行会话创建后台页，不会拉起停着的 Profile，也不导航用户的前台页面。
+已启动的 Chromium 被视为持久认证会话：不空闲回收，不因单次 API/CDP 连接失败重启，后台调用也不隐式切换 `browserMode`。例外只有用户明确打开 VNC：当 Headless 没有活跃采集页时，VNC 入口会原子地完成模式切换。保活只对已运行会话创建后台页，不会拉起停着的 Profile，也不导航用户的前台页面。
 
 Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 5 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 

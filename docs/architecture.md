@@ -39,7 +39,7 @@ Linux 服务器
 - `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，提供 CDP；VNC/noVNC 控制通道由租约按需启停
 - `headless`：Chromium 使用 `--headless=new`，只启动 CDP，不启动桌面、输入法和 noVNC
 
-每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 持久化普通浏览器数据。`user-data-dir` 不是 session cookie 备份：容器停止仍可能丢失登录态。同一个 Profile 的运行模式在 Chromium 存活期间不可切换，切换前必须显式停止。
+每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 持久化普通浏览器数据。`user-data-dir` 不是 session cookie 备份：容器停止仍可能丢失登录态。后台调用不能切换运行模式；用户明确打开 VNC 是唯一受控例外，且必须先确认没有活跃采集页。
 
 ### 第二层：Hive Browser Server（我们的核心）
 
@@ -101,7 +101,7 @@ POST /browsers/:id/vnc/release      撤销 VNC 控制，保留 Chromium 认证�
 创建最小化后台窗口 → 加载 Profile URL → 关闭后台窗口
     │
     ▼  Electron 客户端申请人工操作
-运行模式为 VNC：启用 noVNC 控制通道；模式不匹配时返回 409，不隐式重启
+运行模式为 VNC：启用 noVNC 控制通道；Headless 无采集页时，由 VNC 入口受控切换
     │
     ▼  VNC 期间有采集任务
 同一 Chromium 创建最小化后台窗口 → 完成后立即关闭
@@ -109,7 +109,7 @@ POST /browsers/:id/vnc/release      撤销 VNC 控制，保留 Chromium 认证�
     ▼  客户端关闭或租约超时
 停止 noVNC/x11vnc → 保留 Chromium 认证会话
     │
-    ▼  只有显式 POST /stop 或删除 Profile
+    ▼  显式 POST /stop、删除 Profile，或用户申请 VNC 受控切换
 关闭 Chromium 容器（session cookie 可能丢失）
 ```
 

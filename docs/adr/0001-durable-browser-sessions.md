@@ -20,9 +20,9 @@ VNC access and the authenticated Chromium process are different resources. Coupl
 ## Decision
 
 1. A configured Profile is dormant until first use. Keep-alive never starts a stopped Profile.
-2. Once started, Chromium remains running until an explicit `POST /browsers/:id/stop`, Profile deletion, or an external process/host failure.
+2. Once started, Chromium remains running until an explicit lifecycle action (`POST /browsers/:id/stop`, Profile deletion, or VNC acquisition that requires a Headless-to-VNC transition), or an external process/host failure.
 3. Releasing or expiring a VNC lease stops only x11vnc/noVNC and disconnects remote-control clients. It does not stop Chromium.
-4. The runtime mode is immutable while Chromium is running. A conflicting explicit mode request returns `409` and requires an explicit stop before switching.
+4. Background operations cannot change the runtime mode. An explicit VNC acquisition may switch an idle Headless runtime to VNC after verifying that no managed collection page is active; the transition stays inside the per-Profile lifecycle lock.
 5. A CDP connection failure fails that operation and leaves the running container intact. It is not repaired by an implicit browser restart.
 6. After a Hive Server process restart, all running containers are adopted. VNC access is revoked because leases are not recoverable, while Chromium remains running.
 7. Scheduled platform keep-alive loads the Profile URL in a minimized background Page and closes that Page after load. It never navigates the foreground page.

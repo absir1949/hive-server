@@ -245,6 +245,60 @@ test('a Docker status failure never treats a running browser as disposable', asy
   }
 });
 
+test('an explicit VNC request switches an idle Headless runtime to VNC', async () => {
+  const startedModes = [];
+  const stopped = [];
+  const { server, vncAccessEvents } = await startApi({
+    onStart: (_, options) => startedModes.push(options.browserMode),
+    onStop: (profileId) => stopped.push(String(profileId)),
+  });
+  try {
+    const headless = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(headless.status, 200);
+
+    const response = await request(server, '/browsers/1/vnc');
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.browserMode, 'vnc');
+    assert.ok(body.leaseId);
+    assert.match(body.url, /:6117\/vnc\.html/);
+    assert.deepEqual(startedModes, ['headless', 'vnc']);
+    assert.deepEqual(stopped, ['1']);
+    assert.deepEqual(vncAccessEvents, ['enable:1']);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('a failed Headless status check cannot destroy the runtime during VNC open', async () => {
+  const stopped = [];
+  const { server, cm } = await startApi({
+    statusError: new Error('Docker API unavailable'),
+    onStop: (profileId) => stopped.push(String(profileId)),
+  });
+  try {
+    const headless = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(headless.status, 200);
+
+    const response = await request(server, '/browsers/1/vnc');
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.match(body.error, /left intact/);
+    assert.deepEqual(stopped, []);
+    assert.equal(cm.containers.get('1').browserMode, 'headless');
+  } finally {
+    await closeApi(server);
+  }
+});
+
 test('VNC release keeps one durable Chrome until an explicit stop', async () => {
   const startedModes = [];
   const stopped = [];
