@@ -119,9 +119,9 @@ else
   echo "Hive Chrome ready — mode: headless, CDP :9222"
 fi
 
-# Docker sends SIGTERM to PID 1 when a profile changes from VNC to Headless.
-# Forward it to Chrome and wait for a clean exit so cookies/localStorage are
-# flushed before the container is removed and the next mode starts.
+# Docker sends SIGTERM to PID 1 only for an explicit browser stop/removal.
+# Forward it to Chrome and wait for a clean exit so persistent browser data is
+# flushed before the container is removed.
 shutdown_chrome() {
   trap - TERM INT
   if [ "$BROWSER_MODE" = "vnc" ]; then

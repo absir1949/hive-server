@@ -60,8 +60,7 @@ test('VNC containers keep the noVNC port binding', async () => {
   });
 });
 
-test('recover removes running VNC containers without a restorable lease', async () => {
-  const stopped = [];
+test('recover preserves running browsers and revokes stale VNC access', async () => {
   const docker = {
     async listContainers() {
       return [
@@ -84,21 +83,70 @@ test('recover removes running VNC containers without a restorable lease', async 
         },
       ];
     },
-    getContainer(name) {
+    getContainer() {
+      throw new Error('recover must not stop or remove a running browser');
+    },
+  };
+  const manager = new ContainerManager({ docker });
+  const revoked = [];
+  manager.disableVncAccess = async (profileId) => revoked.push(String(profileId));
+
+  const recovered = await manager.recover();
+
+  assert.deepEqual(recovered, ['4', '5']);
+  assert.deepEqual(revoked, ['4']);
+  assert.equal(manager.containers.get('4').browserMode, 'vnc');
+  assert.equal(manager.containers.get('5').browserMode, 'headless');
+});
+
+test('start never changes the mode of a running authenticated browser', async () => {
+  let createCalls = 0;
+  const docker = {
+    getContainer() {
+      throw notFound();
+    },
+    async createContainer() {
+      createCalls += 1;
+      return { id: 'container-vnc', async start() {} };
+    },
+  };
+  const manager = new ContainerManager({ docker });
+  manager._waitForCDP = async () => ({ webSocketDebuggerUrl: 'ws://127.0.0.1' });
+
+  await manager.start('17', { browserMode: 'vnc' });
+  await assert.rejects(
+    manager.start('17', { browserMode: 'headless' }),
+    /explicitly stop it/,
+  );
+
+  assert.equal(createCalls, 1);
+  assert.equal(manager.containers.get('17').browserMode, 'vnc');
+});
+
+test('start never replaces an untracked running browser', async () => {
+  let createCalls = 0;
+  let removeCalls = 0;
+  const docker = {
+    getContainer() {
       return {
-        async stop() { stopped.push(`stop:${name}`); },
-        async remove() { stopped.push(`remove:${name}`); },
+        async inspect() { return { State: { Running: true } }; },
+        async remove() { removeCalls += 1; },
       };
+    },
+    async createContainer() {
+      createCalls += 1;
+      return { id: 'replacement', async start() {} };
     },
   };
   const manager = new ContainerManager({ docker });
 
-  const recovered = await manager.recover();
+  await assert.rejects(
+    manager.start('17', { browserMode: 'vnc' }),
+    /untracked running container/,
+  );
 
-  assert.deepEqual(recovered, ['5']);
-  assert.deepEqual(stopped, ['stop:hive-4', 'remove:hive-4']);
-  assert.equal(manager.containers.has('4'), false);
-  assert.equal(manager.containers.get('5').browserMode, 'headless');
+  assert.equal(createCalls, 0);
+  assert.equal(removeCalls, 0);
 });
 
 test('VNC access can be revoked and restored without stopping Chromium', async () => {

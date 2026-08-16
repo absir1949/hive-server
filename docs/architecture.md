@@ -2,7 +2,7 @@
 
 ## 要解决的问题
 
-很多网站没有 API，只能通过浏览器登录态来做自动化。但本地电脑无法 7×24 在线，需要把浏览器放到服务器上。服务器上可能有几十上百个账号，不能全部同时开着。人工偶尔需要手动操作这些浏览器，不想重新登录；自动采集则不需要承担桌面和 VNC 的运行开销。
+很多网站没有 API，只能通过浏览器登录态来做自动化。部分平台的关键 Cookie 是进程级 session cookie，即使挂载了 `user-data-dir`，关闭 Chromium 后也不保证能恢复。因此系统要同时满足：已启动的认证会话持续运行，人工远程控制可按需启停，未启动的 Profile 不会被保活任务自动拉起。
 
 ## 架构总览
 
@@ -13,7 +13,7 @@ Linux 服务器
 │  Hive Browser Server (Node.js)                      │
 │  ├── HTTP API ── AI 自动化调用                       │
 │  ├── Profile 管理（指纹、代理、账号配置）              │
-│  └── 调度：按需启动/关闭 Chrome 容器                  │
+│  └── 调度：按需启动，显式停止 Chrome 容器              │
 │                                                     │
 │  Docker 容器 × N（按需启动）                          │
 │  ┌──────────────────────────────────────────────┐    │
@@ -39,7 +39,7 @@ Linux 服务器
 - `vnc`：Chromium 跑在 Xvfb 虚拟显示器里，提供 CDP；VNC/noVNC 控制通道由租约按需启停
 - `headless`：Chromium 使用 `--headless=new`，只启动 CDP，不启动桌面、输入法和 noVNC
 
-每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 做持久化。容器关了数据还在，下次启动登录态恢复。同一个 Profile 的 VNC 和 Headless 容器不能同时打开同一数据目录。
+每个 Profile 一次只运行一个容器，数据卷挂载 `user-data-dir` 持久化普通浏览器数据。`user-data-dir` 不是 session cookie 备份：容器停止仍可能丢失登录态。同一个 Profile 的运行模式在 Chromium 存活期间不可切换，切换前必须显式停止。
 
 ### 第二层：Hive Browser Server（我们的核心）
 
@@ -48,7 +48,7 @@ Node.js 服务，职责：
 - **指纹注入**：每个 profile 生成唯一指纹，通过 Chrome 扩展注入
 - **代理分配**：每个 profile 可配独立代理
 - **HTTP API**：对外提供 navigate / execute / cookies / screenshot 等操作
-- **容器调度**：按需启动/关闭 Docker 容器，不用的容器关掉省资源
+- **容器调度**：按需启动 Docker 容器，只响应显式停止/删除，不做认证会话的空闲回收
 - **运行模式**：按浏览器会话选择 VNC 登录或 Headless 采集，不写入 Profile
 - **CDP 连接**：通过原生 CDP HTTP/WebSocket 操作 Chrome，不依赖页面焦点
 - **后台采集窗口**：在同一 BrowserContext 创建最小化、不聚焦的独立窗口，共享 Cookie 和站点存储
@@ -79,45 +79,50 @@ POST /browsers/:id/pages/:pageId/screenshot 截取后台窗口
 POST /browsers/:id/pages/:pageId/close      关闭后台窗口
 GET  /browsers/:id/vnc              获取 VNC 租约并返回 noVNC 地址
 POST /browsers/:id/vnc/heartbeat    刷新 VNC 租约
-POST /browsers/:id/vnc/release      撤销 VNC 控制并保留 Chromium 到空闲回收
+POST /browsers/:id/vnc/release      撤销 VNC 控制，保留 Chromium 认证会话
 ```
 
-采集冷启动默认使用 Headless。已有 VNC Chromium 时，采集通过 `/pages/*` 创建同 BrowserContext 的后台窗口，不启动第二个进程。VNC 活跃期间，旧 `navigate`、`execute` 和主页面全页截图不会操作人工前台。客户端关闭窗口或心跳超时后，服务端先停止 noVNC/x11vnc、断开现有远程连接，再删除租约；Chromium 本身继续服务连续采集，空闲 5 分钟后停止。
+采集冷启动默认使用 Headless。已有 VNC Chromium 时，采集和保活通过 `/pages/*` 创建同 BrowserContext 的后台窗口，不启动第二个进程，也不导航人工前台。VNC 活跃期间，旧 `navigate`、`execute` 和主页面全页截图不会操作人工前台。客户端关闭窗口或心跳超时后，服务端只停止 noVNC/x11vnc 并断开远程连接，Chromium 继续运行。
 
 ## Chrome 生命周期
 
 ```
-空闲状态：容器关闭，user-data-dir 数据保留在磁盘
+未启动：只有 Profile 配置，不占用浏览器资源
     │
     ▼  API 调用到达
-启动容器 → 按本次会话的 browserMode 启动 Chrome → 登录态由 user-data-dir 自动恢复
+启动容器 → 按本次会话的 browserMode 启动 Chrome
     │
     ▼  API 主动 navigate 到 profile 配置的 URL
     │
     ▼  原生 CDP WebSocket 连接
-执行操作 → 返回结果
+执行操作 → 返回结果 → Chromium 持续运行
     │
-    ▼  持续有 API 调用：保持运行
-    ▼  空闲超时（默认 5 分钟）：关闭容器，数据保留
+    ▼  保活到期且容器仍在运行
+创建最小化后台窗口 → 加载 Profile URL → 关闭后台窗口
     │
     ▼  Electron 客户端申请人工操作
-无采集窗口时：停止 Headless → 启动 VNC → 启用 noVNC 控制通道
+运行模式为 VNC：启用 noVNC 控制通道；模式不匹配时返回 409，不隐式重启
     │
     ▼  VNC 期间有采集任务
 同一 Chromium 创建最小化后台窗口 → 完成后立即关闭
     │
     ▼  客户端关闭或租约超时
-停止 noVNC/x11vnc → 保留 Chromium → 连续采集复用 / 空闲 5 分钟后停止
+停止 noVNC/x11vnc → 保留 Chromium 认证会话
+    │
+    ▼  只有显式 POST /stop 或删除 Profile
+关闭 Chromium 容器（session cookie 可能丢失）
 ```
 
 ## 服务器重启
 
-Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 重连。VNC 租约保存在服务端内存中，无法安全恢复；服务重启会清理没有可恢复租约的旧 VNC 容器，客户端需要重新打开 VNC。
+Hive Browser Server 进程重启时，会从 Docker 状态接管所有仍在运行的 Headless/VNC 容器。VNC 租约保存在服务端内存中，无法恢复；重启时会撤销遗留的 noVNC/x11vnc 控制通道，但不停止 Chromium。客户端需要重新申请 VNC 租约。
+
+宿主机重启、Docker/Chromium 进程崩溃或显式停止不在这个恢复保证内；本方案没有伪装成已实现 session-cookie 导出/恢复。
 
 ## 规模
 
-- 当前几十个账号：Docker Compose 足够
-- 100 个账号：Docker Compose 仍然足够，同时在跑的可能只有 5-10 个
+- 当前几十个账号：已启动会话持续占用 Chromium 内存，需按实际容量监控
+- 不再使用空闲回收作为扩容手段；确认不再使用的 Profile 由调用方显式停止
 - 更大规模：考虑 Kubernetes
 
 ## 现有代码复用
@@ -126,7 +131,7 @@ Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 
 |------|----------|
 | `lib/containerManager.js` | Docker 容器及 VNC 控制通道生命周期 |
 | `lib/browserConnector.js` | 原生 CDP 连接与后台采集窗口 |
-| `lib/api.js` | Profile 锁、VNC 租约、空闲回收和 HTTP API |
+| `lib/api.js` | Profile 锁、持久会话边界、VNC 租约和 HTTP API |
 | `lib/profileStore.js` | 通用 Profile 数据，不持久化运行模式 |
 | `client/` | Electron 菜单栏客户端及 VNC 窗口 |
 
@@ -135,4 +140,4 @@ Hive Browser Server 重启时，Headless Docker 容器会被恢复并通过 CDP 
 - 不用 Browserless（许可证限制，场景不匹配）
 - 不用 WebRTC（复杂，noVNC 够用）
 - 不启动两个 Chromium 共享或复制同一 Profile
-- 不做 Cookie 同步（同一个浏览器实例和 BrowserContext，不需要同步）
+- 本阶段不做 session-cookie 导出/恢复；通过不自动结束 Chromium 来保持会话

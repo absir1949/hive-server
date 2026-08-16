@@ -1,10 +1,10 @@
 const express = require('express');
-const http = require('http');
 const api = require('./lib/api');
 const ContainerManager = require('./lib/containerManager');
 const BrowserConnector = require('./lib/browserConnector');
 const ProfileStore = require('./lib/profileStore');
 const FingerprintEngine = require('./lib/fingerprintEngine');
+const { keepAliveRunningProfile } = require('./lib/keepAlive');
 
 const PORT = process.env.PORT || 37568;
 
@@ -23,21 +23,18 @@ api.mount(app, { cm, bc, ps, fe });
 // profileId → setInterval handle
 const keepAliveTimers = new Map();
 
-function keepAliveNavigate(profileId, url) {
-  const postData = JSON.stringify({ url });
-  const req = http.request(`http://127.0.0.1:${PORT}/browsers/${profileId}/navigate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
-  }, (res) => {
-    let body = '';
-    res.on('data', (d) => (body += d));
-    res.on('end', () => {
-      const ok = res.statusCode === 200;
-      console.log(`[KeepAlive] Profile ${profileId} → ${url} ${ok ? '✓' : '✗ ' + body}`);
+async function keepAliveProfile(profile) {
+  const profileId = String(profile.id);
+  try {
+    const result = await keepAliveRunningProfile({
+      containerManager: cm,
+      baseUrl: `http://127.0.0.1:${PORT}`,
+      profile,
     });
-  });
-  req.on('error', (e) => console.error(`[KeepAlive] Profile ${profileId} error:`, e.message));
-  req.end(postData);
+    if (result.ran) console.log(`[KeepAlive] Profile ${profileId} → ${profile.url} ✓`);
+  } catch (err) {
+    console.error(`[KeepAlive] Profile ${profileId} error:`, err.message);
+  }
 }
 
 function syncKeepAliveTimer(profileId) {
@@ -53,7 +50,7 @@ function syncKeepAliveTimer(profileId) {
 
   const intervalMs = profile.keepAliveInterval * 1000;
   const timer = setInterval(() => {
-    keepAliveNavigate(profile.id, profile.url);
+    void keepAliveProfile(profile);
   }, intervalMs);
   timer.unref();
   keepAliveTimers.set(String(profileId), timer);

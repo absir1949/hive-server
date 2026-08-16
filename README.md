@@ -10,7 +10,7 @@ Linux 服务器
 │  Hive Server (Node.js)                      │
 │  ├── HTTP API ── AI / Center 调用           │
 │  ├── Profile 管理（指纹、代理、账号配置）     │
-│  └── 调度：按需启动/关闭 Chrome 容器         │
+│  └── 调度：按需启动，显式停止 Chrome 容器       │
 │                                             │
 │  Docker 容器 × N（按需启动）                 │
 │  ┌──────────────────────────────────────┐   │
@@ -20,14 +20,14 @@ Linux 服务器
 └─────────────────────────────────────────────┘
 ```
 
-- **默认 Headless** — 普通 API 和后台保活按需启动 Headless，不启动桌面和 noVNC
+- **默认 Headless** — 普通 API 冷启动使用 Headless，不启动桌面和 noVNC
 - **noVNC** — 浏览器打开即可远程操作 Chrome，不需要客户端
 - **后台采集窗口** — VNC 开启时，采集复用同一 Chrome；窗口创建时即最小化且不抢焦点
 - **客户端 VNC 租约** — 关闭窗口、后台超过 5 分钟或心跳超时后停止 noVNC/x11vnc，并断开已有控制连接
-- **空闲回收** — VNC 释放后不重启 Chrome；连续采集直接复用，整体空闲 5 分钟后再停止
+- **持久认证会话** — 已启动的 Chromium 不做空闲回收，VNC 释放后继续服务采集和保活
 - **指纹隔离** — 每个 profile 独立浏览器指纹，通过 Chrome 扩展注入
 
-同一个 Profile 的用户目录不会被两个 Chrome 进程同时打开。Headless 存在未完成的后台采集窗口时，服务端会拒绝打开 VNC，避免中途停掉任务；VNC 关闭后则保留当前 Chrome 到空闲回收。采集窗口使用默认 BrowserContext，因此与 VNC 窗口共享 Cookie、LocalStorage 和 IndexedDB，不需要复制 Profile 或手动同步登录态。
+同一个 Profile 的用户目录不会被两个 Chrome 进程同时打开。已运行模式与新请求不一致时，服务端返回 `409`，不会隐式停止并重启 Chromium。采集窗口使用默认 BrowserContext，因此与 VNC 窗口共享 Cookie、LocalStorage 和 IndexedDB，不需要复制 Profile 或手动同步登录态。
 
 ## 快速开始
 
@@ -136,10 +136,12 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `POST` | `/browsers/:id/pages/:pageId/close` | 关闭后台窗口并释放 CDP 会话 |
 | `GET` | `/browsers/:id/vnc` | 获取 VNC 租约和 noVNC 地址 |
 | `POST` | `/browsers/:id/vnc/heartbeat` | 刷新 VNC 租约 |
-| `POST` | `/browsers/:id/vnc/release` | 停止 VNC 控制通道，Chromium 留待采集或空闲回收 |
+| `POST` | `/browsers/:id/vnc/release` | 停止 VNC 控制通道，Chromium 认证会话继续运行 |
 | `GET` | `/health` | 健康检查 |
 
 `browserMode` 不属于 Profile。冷启动采集默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 存在时，采集应使用 `/pages/*` 后台窗口；主页导航、旧 `/execute` 脚本和主页全页截图会被拒绝，避免打断人工操作。VNC 租约默认 2 分钟未收到心跳就撤销控制通道，可通过 `VNC_LEASE_TTL_MS` 调整。
+
+已启动的 Chromium 被视为持久认证会话：不空闲回收，不因单次 API/CDP 连接失败重启，也不隐式切换 `browserMode`。只有显式 `POST /browsers/:id/stop` 或删除 Profile 才会停止它。保活只对已运行会话创建后台页，不会拉起停着的 Profile，也不导航用户的前台页面。
 
 Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 5 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 
@@ -148,7 +150,6 @@ Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
 | `PORT` | `3000` | 服务端口 |
-| `IDLE_TIMEOUT_MS` | `300000` | 空闲超时（ms），默认 5 分钟 |
 | `VNC_LEASE_TTL_MS` | `120000` | VNC 心跳租约超时（ms），默认 2 分钟 |
 | `HOST_DATA_DIR` | `./data` | 数据���录（Docker 部署时需设为宿主机绝对路���） |
 

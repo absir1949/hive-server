@@ -311,7 +311,7 @@ async function openVnc(profileId, profileName) {
 
   // Do not let the Electron window disappear before the server has released
   // the interactive lease. Chrome stays alive for background collection and
-  // is reclaimed later by the server's idle timeout.
+  // authentication continuity until an explicit browser stop.
   win.on('close', (event) => {
     if (allowWindowClose) return;
     event.preventDefault();

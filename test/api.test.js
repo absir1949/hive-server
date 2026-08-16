@@ -9,6 +9,8 @@ async function startApi({
   onStart,
   onStop,
   onNewPage,
+  connectError,
+  statusError,
   enableVncErrorAt,
   disableVncError,
 } = {}) {
@@ -24,6 +26,7 @@ async function startApi({
       }));
     },
     async status(profileId) {
+      if (statusError) throw statusError;
       return this.containers.has(String(profileId)) ? 'running' : 'not_found';
     },
     async start(profileId, options) {
@@ -63,7 +66,10 @@ async function startApi({
   let nextPageId = 1;
   const bc = {
     get(id) { return connected.has(String(id)) ? true : null; },
-    async connect(id) { connected.add(String(id)); },
+    async connect(id) {
+      if (connectError) throw connectError;
+      connected.add(String(id));
+    },
     async disconnect(id) {
       connected.delete(String(id));
       pages.delete(String(id));
@@ -186,7 +192,60 @@ test('browser operations default to Headless when no session was selected', asyn
   }
 });
 
-test('VNC reuses one Chrome for background collection and release keeps it until idle', async () => {
+test('a CDP connection failure never stops the running authenticated browser', async () => {
+  const startedModes = [];
+  const stopped = [];
+  const { server, cm } = await startApi({
+    connectError: new Error('temporary CDP failure'),
+    onStart: (_, options) => startedModes.push(options.browserMode),
+    onStop: (profileId) => stopped.push(String(profileId)),
+  });
+  try {
+    const response = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.match(body.error, /without restarting it/);
+    assert.deepEqual(startedModes, ['headless']);
+    assert.deepEqual(stopped, []);
+    assert.equal(cm.containers.get('1').browserMode, 'headless');
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('a Docker status failure never treats a running browser as disposable', async () => {
+  const stopped = [];
+  const { server, cm } = await startApi({
+    statusError: new Error('Docker API unavailable'),
+    onStop: (profileId) => stopped.push(String(profileId)),
+  });
+  try {
+    const started = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(started.status, 200);
+
+    const response = await request(server, '/browsers/1/navigate', {
+      method: 'POST',
+      body: { url: 'https://example.com' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 503);
+    assert.match(body.error, /left intact/);
+    assert.deepEqual(stopped, []);
+    assert.equal(cm.containers.has('1'), true);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('VNC release keeps one durable Chrome until an explicit stop', async () => {
   const startedModes = [];
   const stopped = [];
   const { server, vncAccessEvents } = await startApi({
@@ -194,10 +253,6 @@ test('VNC reuses one Chrome for background collection and release keeps it until
     onStop: (profileId) => stopped.push(String(profileId)),
   });
   try {
-    await request(server, '/browsers/1/start', {
-      method: 'POST',
-      body: { browserMode: 'headless' },
-    });
     const response = await request(server, '/browsers/1/vnc');
     const body = await response.json();
 
@@ -205,8 +260,8 @@ test('VNC reuses one Chrome for background collection and release keeps it until
     assert.match(body.url, /:6117\/vnc\.html/);
     assert.ok(body.leaseId);
     assert.deepEqual(vncAccessEvents, ['enable:1']);
-    assert.deepEqual(startedModes, ['headless', 'vnc']);
-    assert.deepEqual(stopped, ['1']);
+    assert.deepEqual(startedModes, ['vnc']);
+    assert.deepEqual(stopped, []);
 
     const foregroundNavigation = await request(server, '/browsers/1/navigate', {
       method: 'POST',
@@ -236,7 +291,7 @@ test('VNC reuses one Chrome for background collection and release keeps it until
     assert.equal(collectionPage.status, 200);
     const collectionPageBody = await collectionPage.json();
     assert.ok(collectionPageBody.pageId);
-    assert.deepEqual(startedModes, ['headless', 'vnc']);
+    assert.deepEqual(startedModes, ['vnc']);
 
     const heartbeat = await request(server, '/browsers/1/vnc/heartbeat', {
       method: 'POST',
@@ -254,27 +309,39 @@ test('VNC reuses one Chrome for background collection and release keeps it until
     assert.equal(releaseBody.browserMode, 'vnc');
     assert.equal(releaseBody.resumedBrowserMode, null);
     assert.deepEqual(vncAccessEvents, ['enable:1', 'disable:1']);
-    assert.deepEqual(startedModes, ['headless', 'vnc']);
-    assert.deepEqual(stopped, ['1']);
+    assert.deepEqual(startedModes, ['vnc']);
+    assert.deepEqual(stopped, []);
 
     const modeSwitchDuringCollection = await request(server, '/browsers/1/start', {
       method: 'POST',
       body: { browserMode: 'headless' },
     });
     assert.equal(modeSwitchDuringCollection.status, 409);
-    assert.deepEqual(stopped, ['1']);
+    assert.deepEqual(stopped, []);
 
     const closeCollectionPage = await request(server, `/browsers/1/pages/${collectionPageBody.pageId}/close`, {
       method: 'POST',
     });
     assert.equal(closeCollectionPage.status, 200);
 
+    const modeSwitchWithoutCollection = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(modeSwitchWithoutCollection.status, 409);
+    assert.match((await modeSwitchWithoutCollection.json()).error, /explicitly stop/);
+    assert.deepEqual(stopped, []);
+
     const nextCollection = await request(server, '/browsers/1/pages/new', {
       method: 'POST',
       body: { url: 'https://store.weixin.qq.com/shop/home' },
     });
     assert.equal(nextCollection.status, 200);
-    assert.deepEqual(startedModes, ['headless', 'vnc']);
+    assert.deepEqual(startedModes, ['vnc']);
+
+    const explicitStop = await request(server, '/browsers/1/stop', { method: 'POST' });
+    assert.equal(explicitStop.status, 200);
+    assert.deepEqual(stopped, ['1']);
   } finally {
     await closeApi(server);
   }

@@ -9,7 +9,6 @@ services:
       - ${DATA_DIR:-./data}:/app/data
     environment:
       - PORT=${PORT:-3000}
-      - IDLE_TIMEOUT_MS=${IDLE_TIMEOUT_MS:-300000}
       - VNC_LEASE_TTL_MS=${VNC_LEASE_TTL_MS:-120000}
       # HOST_DATA_DIR tells containerManager to use host paths for Docker volume mounts.
       # Must match the left side of the data volume mount above.
