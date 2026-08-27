@@ -34,6 +34,9 @@ test('headless containers expose CDP but do not bind noVNC', async () => {
     'hive.browserMode': 'headless',
   });
   assert.ok(config.Env.includes('BROWSER_MODE=headless'));
+  assert.equal(config.HostConfig.Memory, 1536 * 1024 * 1024);
+  assert.equal(config.HostConfig.MemorySwap, 1536 * 1024 * 1024);
+  assert.equal(config.HostConfig.NanoCpus, 500000000);
 });
 
 test('VNC containers keep the noVNC port binding', async () => {

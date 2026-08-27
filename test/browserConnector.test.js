@@ -25,6 +25,24 @@ function createConnectedConnector() {
   return connector;
 }
 
+test('setCookiesMain enables the Network domain then writes the cookie list', async () => {
+  const connector = createConnectedConnector();
+  const ws = new FakeWebSocket();
+  const commands = [];
+  connector._getMainPageWs = async () => ({ wsUrl: 'ws://page' });
+  connector._connectWs = async () => ws;
+  connector._cdpSend = async (socket, method, params) => {
+    commands.push({ method, params });
+    return {};
+  };
+
+  await connector.setCookiesMain('1', [{ name: 'biz_magic', value: 'abc', domain: 'store.weixin.qq.com' }]);
+
+  assert.deepEqual(commands.map((command) => command.method), ['Network.enable', 'Network.setCookies']);
+  assert.equal(commands[1].params.cookies[0].name, 'biz_magic');
+  assert.equal(ws.closed, true);
+});
+
 test('collection pages use minimized background windows without taking focus', async () => {
   const connector = createConnectedConnector();
   const ws = new FakeWebSocket();

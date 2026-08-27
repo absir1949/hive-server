@@ -44,7 +44,10 @@
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Hive Client 需要访问局域网中的 Hive Server"
+      }
     }
   }
 }

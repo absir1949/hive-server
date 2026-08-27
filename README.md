@@ -105,7 +105,7 @@ curl -X POST http://localhost:3000/browsers/1/vnc/heartbeat \
   -H "Content-Type: application/json" \
   -d '{"leaseId":"<leaseId>"}'
 
-# 客户端关闭窗口后释放 VNC；Chrome 保留到整体空闲超时
+# 客户端关闭窗口后释放 VNC；Chrome 保留到空闲超时后再 dump cookie 并停止
 curl -X POST http://localhost:3000/browsers/1/vnc/release \
   -H "Content-Type: application/json" \
   -d '{"leaseId":"<leaseId>"}'
@@ -141,7 +141,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 
 `browserMode` 不属于 Profile。冷启动采集默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 存在时，采集应使用 `/pages/*` 后台窗口；主页导航、旧 `/execute` 脚本和主页全页截图会被拒绝，避免打断人工操作。VNC 租约默认 2 分钟未收到心跳就撤销控制通道，可通过 `VNC_LEASE_TTL_MS` 调整。
 
-已启动的 Chromium 被视为持久认证会话：不空闲回收，不因单次 API/CDP 连接失败重启，后台调用也不隐式切换 `browserMode`。例外只有用户明确打开 VNC：当 Headless 没有活跃采集页时，VNC 入口会原子地完成模式切换。保活只对已运行会话创建后台页，不会拉起停着的 Profile，也不导航用户的前台页面。
+登录态靠 `data/{id}/auth-cookies.json` 备份，不靠进程常驻。停止、切 VNC、容量淘汰和保活成功后都会 dump cookie；冷启动先灌回再打开店铺页。微信小店 Headless 恢复后仍是登录页时返回 `401 needsLogin`，VNC 仍会启动方便扫码。并发默认最多 8 个容器（`MAX_RUNNING_BROWSERS`），超出淘汰最久未用且没有 VNC/采集页的浏览器。无 VNC 租约时默认 10 分钟空闲后 dump 并停止（`IDLE_STOP_MS`）。保活只对已运行会话创建后台页，不会拉起停着的 Profile。
 
 Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 5 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 
@@ -151,14 +151,19 @@ Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；
 |----------|--------|------|
 | `PORT` | `3000` | 服务端口 |
 | `VNC_LEASE_TTL_MS` | `120000` | VNC 心跳租约超时（ms），默认 2 分钟 |
-| `HOST_DATA_DIR` | `./data` | 数据���录（Docker 部署时需设为宿主机绝对路���） |
+| `MAX_RUNNING_BROWSERS` | `8` | 同时运行的 Chrome 容器上限 |
+| `IDLE_STOP_MS` | `600000` | 无 VNC 时的空闲停止时间，`0` 关闭 |
+| `CHROME_MEMORY_BYTES` | `1610612736` | 单容器内存上限，默认 1.5GiB |
+| `CHROME_NANO_CPUS` | `500000000` | 单容器 CPU 上限，默认 0.5 核 |
+| `HOST_DATA_DIR` | `./data` | 数据目录（Docker 部署时需设为宿主机绝对路径） |
 
 ## 模块
 
 | 模块 | 职责 |
 |------|------|
 | `containerManager` | Docker 容器生命周期（启动/停止/恢复） |
-| `browserConnector` | CDP ���接池，自动重连 |
-| `api` | HTTP 端点，编排容器+连接+操作 |
+| `browserConnector` | CDP 连接池，cookie 读写 |
+| `api` | HTTP 端点，cookie 恢复、容量淘汰、VNC 租约 |
+| `authStore` | 每 Profile 的 cookie dump 文件 |
 | `profileStore` | Profile CRUD，JSON 文件存储 |
 | `fingerprintEngine` | 指纹生成 + Chrome 扩展构建 |

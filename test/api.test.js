@@ -1,11 +1,20 @@
+const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const api = require('../lib/api');
+const AuthStore = require('../lib/authStore');
+
+function tempAuthStore() {
+  return new AuthStore({ dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'hive-api-auth-')) });
+}
 
 async function startApi({
   profile = { id: 1, name: 'test' },
+  profiles,
   onStart,
   onStop,
   onNewPage,
@@ -13,9 +22,15 @@ async function startApi({
   statusError,
   enableVncErrorAt,
   disableVncError,
+  cookies = [],
+  loginProbe = { href: 'https://example.com/', title: 'ok', text: 'ok' },
+  authStore,
 } = {}) {
   const vncAccessEvents = [];
+  const restoredCookies = [];
+  const navigated = [];
   let enableVncCalls = 0;
+  const profileList = profiles || [profile];
   const cm = {
     containers: new Map(),
     async list() {
@@ -55,8 +70,8 @@ async function startApi({
     },
   };
   const ps = {
-    get(id) { return String(id) === String(profile.id) ? profile : null; },
-    list() { return [profile]; },
+    get(id) { return profileList.find((item) => String(item.id) === String(id)) || null; },
+    list() { return profileList; },
     create() { return profile; },
     update() { return profile; },
     remove() { return true; },
@@ -74,7 +89,10 @@ async function startApi({
       connected.delete(String(id));
       pages.delete(String(id));
     },
-    async navigateMain() {},
+    async navigateMain(id, url) { navigated.push({ id: String(id), url }); },
+    async getCookiesMain() { return cookies; },
+    async setCookiesMain(id, next) { restoredCookies.push({ id: String(id), cookies: next }); },
+    async evaluateOnMain() { return loginProbe; },
     async newPage(id) {
       const pid = String(id);
       const pageId = `page-${nextPageId++}`;
@@ -89,11 +107,11 @@ async function startApi({
   };
   const app = express();
   app.use(express.json());
-  api.mount(app, { cm, bc, ps, fe: {} });
+  api.mount(app, { cm, bc, ps, fe: {}, authStore });
 
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
-  return { server, cm, bc, vncAccessEvents };
+  return { server, cm, bc, vncAccessEvents, restoredCookies, navigated };
 }
 
 async function request(server, path, { method = 'GET', body } = {}) {
@@ -535,3 +553,139 @@ test('profile API rejects browserMode because mode belongs to the runtime', asyn
     await closeApi(server);
   }
 });
+
+test('stopping a browser dumps cookies before the container is removed', async () => {
+  const authStore = tempAuthStore();
+  const cookies = [
+    { name: 'biz_magic', value: 'abc', domain: 'store.weixin.qq.com', path: '/', session: true, httpOnly: false, secure: true, sameSite: 'Lax' },
+  ];
+  const { server } = await startApi({ cookies, authStore });
+  try {
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    const stop = await request(server, '/browsers/1/stop', { method: 'POST' });
+    assert.equal(stop.status, 200);
+    assert.equal(authStore.load('1')[0].name, 'biz_magic');
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('cold start restores dumped cookies and reloads the profile URL', async () => {
+  const authStore = tempAuthStore();
+  authStore.save('1', [
+    { name: 'biz_magic', value: 'abc', domain: 'store.weixin.qq.com', path: '/', session: true, httpOnly: false, secure: true, sameSite: 'Lax' },
+  ]);
+  const profile = { id: 1, name: '原野小店', url: 'https://store.weixin.qq.com/shop/home' };
+  const { server, restoredCookies, navigated } = await startApi({
+    profile,
+    authStore,
+    loginProbe: { href: profile.url, title: '微信小店', text: '店铺管理 商品管理' },
+  });
+  try {
+    const response = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(restoredCookies[0].cookies[0].name, 'biz_magic');
+    assert.deepEqual(navigated, [{ id: '1', url: profile.url }]);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('headless collection fails closed when restored cookies are not logged in', async () => {
+  const authStore = tempAuthStore();
+  authStore.save('1', [
+    { name: 'biz_magic', value: 'stale', domain: 'store.weixin.qq.com', path: '/', session: true, httpOnly: false, secure: true, sameSite: 'Lax' },
+  ]);
+  const profile = { id: 1, name: '原野小店', url: 'https://store.weixin.qq.com/shop/home' };
+  const { server } = await startApi({
+    profile,
+    authStore,
+    loginProbe: { href: profile.url, title: '微信小店', text: '登录超时，请重新 登录' },
+  });
+  try {
+    const response = await request(server, '/browsers/1/start', {
+      method: 'POST',
+      body: { browserMode: 'headless' },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.equal(body.needsLogin, true);
+    assert.match(body.error, /needs login/);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('VNC start still succeeds when cookie restore is logged out so a human can re-login', async () => {
+  const authStore = tempAuthStore();
+  authStore.save('1', [
+    { name: 'biz_magic', value: 'stale', domain: 'store.weixin.qq.com', path: '/', session: true, httpOnly: false, secure: true, sameSite: 'Lax' },
+  ]);
+  const profile = { id: 1, name: '原野小店', url: 'https://store.weixin.qq.com/shop/home' };
+  const { server } = await startApi({
+    profile,
+    authStore,
+    loginProbe: { href: profile.url, title: '微信小店', text: '登录超时，请重新 登录' },
+  });
+  try {
+    const response = await request(server, '/browsers/1/vnc');
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).browserMode, 'vnc');
+    const list = await request(server, '/browsers');
+    assert.equal((await list.json()).browsers[0].needsLogin, false);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('opening VNC dumps cookies before switching away from Headless', async () => {
+  const authStore = tempAuthStore();
+  const cookies = [
+    { name: 'biz_token', value: 'tok', domain: 'store.weixin.qq.com', path: '/', session: true, httpOnly: true, secure: true, sameSite: 'Lax' },
+  ];
+  const { server } = await startApi({
+    cookies,
+    authStore,
+    loginProbe: { href: 'https://store.weixin.qq.com/shop/home', title: '微信小店', text: '店铺管理' },
+  });
+  try {
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    const vnc = await request(server, '/browsers/1/vnc');
+    assert.equal(vnc.status, 200);
+    assert.equal(authStore.load('1')[0].name, 'biz_token');
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('starting over the running cap dumps and stops the least recently used browser', async () => {
+  const previous = process.env.MAX_RUNNING_BROWSERS;
+  process.env.MAX_RUNNING_BROWSERS = '1';
+  const authStore = tempAuthStore();
+  const stopped = [];
+  const profiles = [
+    { id: 1, name: 'one', url: 'about:blank' },
+    { id: 2, name: 'two', url: 'about:blank' },
+  ];
+  const { server } = await startApi({
+    profiles,
+    authStore,
+    cookies: [{ name: 'sid', value: '1', domain: 'example.com', path: '/', session: true }],
+    onStop: (profileId) => stopped.push(String(profileId)),
+  });
+  try {
+    assert.equal((await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } })).status, 200);
+    const second = await request(server, '/browsers/2/start', { method: 'POST', body: { browserMode: 'headless' } });
+    assert.equal(second.status, 200);
+    assert.deepEqual(stopped, ['1']);
+    assert.equal(authStore.load('1')[0].name, 'sid');
+  } finally {
+    if (previous === undefined) delete process.env.MAX_RUNNING_BROWSERS;
+    else process.env.MAX_RUNNING_BROWSERS = previous;
+    await closeApi(server);
+  }
+});
+

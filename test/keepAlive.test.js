@@ -81,6 +81,31 @@ test('keep-alive never starts or calls a stopped Profile', async () => {
   assert.equal(fetchCalls, 0);
 });
 
+test('keep-alive dumps cookies after a successful background load', async () => {
+  const dumped = [];
+  const containerManager = {
+    containers: new Map([['1', { browserMode: 'headless' }]]),
+    async status() { return 'running'; },
+  };
+  const fetchImpl = async (endpoint) => {
+    if (endpoint.endsWith('/pages/new')) {
+      return jsonResponse(200, { ok: true, pageId: 'page-1' });
+    }
+    return jsonResponse(200, { ok: true });
+  };
+
+  const result = await keepAliveRunningProfile({
+    containerManager,
+    baseUrl: 'http://127.0.0.1:3000',
+    profile: { id: '1', url: 'https://store.weixin.qq.com/shop/home' },
+    fetchImpl,
+    onSuccess: async (profileId) => { dumped.push(profileId); },
+  });
+
+  assert.deepEqual(result, { ran: true });
+  assert.deepEqual(dumped, ['1']);
+});
+
 test('keep-alive skips a tracked browser that Docker reports stopped', async () => {
   let fetchCalls = 0;
   const containerManager = {

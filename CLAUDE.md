@@ -11,9 +11,10 @@
 ### Core Modules
 
 - **server.js** — 入口，启动 API 服务
-- **lib/api.js** — HTTP API（navigate, execute, cookies, screenshot）
+- **lib/api.js** — HTTP API（navigate, execute, cookies, screenshot, cookie restore, capacity）
 - **lib/containerManager.js** — Docker 容器生命周期（start/stop/status）
-- **lib/browserConnector.js** — CDP 连接管理（Puppeteer connect/reconnect）
+- **lib/browserConnector.js** — CDP 连接管理
+- **lib/authStore.js** — session cookie dump/restore
 - **lib/profileStore.js** — Profile 配置 CRUD
 - **lib/fingerprintEngine.js** — 指纹生成 + Chrome 扩展构建
 
@@ -25,11 +26,11 @@
 
 ### Key Design Decisions
 
-- Chrome 在 Docker 容器里运行（Xvfb，非 headless），Server 通过 CDP 远程连接
-- 容器按需启动，空闲自动关闭，user-data-dir 持久化
+- Chrome 在 Docker 容器里运行；采集默认 `--headless=new`，人工操作才起 Xvfb + VNC
+- 容器按需启动，空闲自动关闭；登录态靠 `auth-cookies.json`，不是 user-data-dir
 - API 调用者不需要管容器生命周期
-- Server 重启后通过 CDP 重连到运行中的容器
-- 不用 --restore-last-session（干扰自动化），启动后主动 navigate 到 profile URL
+- Server 重启后接管运行中的容器，并把数量压到 `MAX_RUNNING_BROWSERS`
+- 不用 --restore-last-session（干扰自动化），冷启动灌 cookie 后再打开 profile URL
 - 人工操作通过 noVNC 网页，不需要客户端应用
 
 ### VNC 快捷键（Electron 客户端内）

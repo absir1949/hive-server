@@ -30,6 +30,7 @@ async function keepAliveProfile(profile) {
       containerManager: cm,
       baseUrl: `http://127.0.0.1:${PORT}`,
       profile,
+      onSuccess: (id) => api.dumpProfileCookies(id),
     });
     if (result.ran) console.log(`[KeepAlive] Profile ${profileId} → ${profile.url} ✓`);
   } catch (err) {
@@ -81,7 +82,19 @@ api.onProfileDeleted = (profileId) => {
 };
 
 // Recover running containers from previous session, then start
-cm.recover().then(() => {
+cm.recover().then(async () => {
+  for (const profileId of [...cm.containers.keys()]) {
+    try {
+      await api.dumpProfileCookies(profileId);
+    } catch (err) {
+      console.error(`[Auth] Startup cookie dump failed for ${profileId}:`, err.message);
+    }
+  }
+  try {
+    await api.enforceRunningCapacity();
+  } catch (err) {
+    console.error('[Capacity] Failed to trim recovered browsers:', err.message);
+  }
   app.listen(PORT, () => {
     console.log(`Hive Server listening on port ${PORT}`);
     initKeepAlive();

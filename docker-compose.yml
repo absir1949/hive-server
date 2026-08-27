@@ -10,6 +10,10 @@ services:
     environment:
       - PORT=${PORT:-3000}
       - VNC_LEASE_TTL_MS=${VNC_LEASE_TTL_MS:-120000}
+      - MAX_RUNNING_BROWSERS=${MAX_RUNNING_BROWSERS:-8}
+      - IDLE_STOP_MS=${IDLE_STOP_MS:-600000}
+      - CHROME_MEMORY_BYTES=${CHROME_MEMORY_BYTES:-1610612736}
+      - CHROME_NANO_CPUS=${CHROME_NANO_CPUS:-500000000}
       # HOST_DATA_DIR tells containerManager to use host paths for Docker volume mounts.
       # Must match the left side of the data volume mount above.
       - HOST_DATA_DIR=${DATA_DIR:-/opt/hive/data}
