@@ -31,3 +31,4 @@ Live verification on 2026-08-27 against 原野小店 (profile 29) showed:
 - Logins can survive a planned stop. They can still fail if WeChat invalidates the ticket; that is reported instead of collected against a logged-out page.
 - Hive Server restart trims recovered containers down to the cap.
 - N100 can run a handful of Headless sessions instead of dozens of Xvfb desktops.
+- `GET /cookies` on a stopped Profile returns the dump without starting Chrome. That is not a login proof; callers must still hit a platform API to decide expiry.

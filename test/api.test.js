@@ -554,6 +554,72 @@ test('profile API rejects browserMode because mode belongs to the runtime', asyn
   }
 });
 
+test('GET /cookies returns dumped cookies without starting a stopped browser', async () => {
+  const authStore = tempAuthStore();
+  const dumped = [
+    { name: 'biz_magic', value: 'dumped', domain: 'store.weixin.qq.com', path: '/', session: true },
+  ];
+  authStore.save('1', dumped);
+  const started = [];
+  const { server } = await startApi({
+    authStore,
+    onStart: (profileId) => started.push(String(profileId)),
+  });
+  try {
+    const response = await request(server, '/browsers/1/cookies');
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, 'dump');
+    assert.equal(typeof body.savedAt, 'string');
+    assert.ok(!Number.isNaN(Date.parse(body.savedAt)));
+    assert.equal(body.cookies[0].value, 'dumped');
+    assert.deepEqual(started, []);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('GET /cookies starts the browser when no dump exists', async () => {
+  const started = [];
+  const { server } = await startApi({
+    cookies: [{ name: 'sid', value: 'live', domain: 'example.com' }],
+    onStart: (profileId) => started.push(String(profileId)),
+  });
+  try {
+    const response = await request(server, '/browsers/1/cookies');
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, 'live');
+    assert.equal(body.savedAt, undefined);
+    assert.equal(body.cookies[0].value, 'live');
+    assert.deepEqual(started, ['1']);
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('GET /cookies prefers live cookies while the browser is running', async () => {
+  const authStore = tempAuthStore();
+  authStore.save('1', [
+    { name: 'biz_magic', value: 'dumped', domain: 'store.weixin.qq.com' },
+  ]);
+  const { server } = await startApi({
+    cookies: [{ name: 'biz_magic', value: 'live', domain: 'store.weixin.qq.com' }],
+    authStore,
+    loginProbe: { href: 'https://example.com/', title: 'ok', text: 'ok' },
+  });
+  try {
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    const response = await request(server, '/browsers/1/cookies');
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, 'live');
+    assert.equal(body.cookies[0].value, 'live');
+  } finally {
+    await closeApi(server);
+  }
+});
+
 test('stopping a browser dumps cookies before the container is removed', async () => {
   const authStore = tempAuthStore();
   const cookies = [

@@ -71,7 +71,7 @@ POST /browsers/:id/start             显式启动/切换会话，默认 Headless
 POST /browsers/:id/stop              停止会话，保留 Profile 数据
 POST /browsers/:id/navigate         导航到 URL（自动启动容器）
 POST /browsers/:id/execute          执行 JS
-GET  /browsers/:id/cookies          获取 cookie
+GET  /browsers/:id/cookies          获取 cookie（浏览器在跑读 CDP；已停止则返回 dump，不冷启动。dump 不是登录证明）
 POST /browsers/:id/screenshot       截图
 POST /browsers/:id/pages/new        创建最小化后台采集窗口
 POST /browsers/:id/pages/:pageId/execute    在后台窗口执行 JS
@@ -90,6 +90,9 @@ POST /browsers/:id/vnc/release      撤销 VNC 控制，保留 Chromium 认证�
 未启动：只有 Profile 配置，不占用浏览器资源
     │
     ▼  API 调用到达
+GET /cookies 且浏览器已停：有 dump 则直接返回，不启动
+    │
+    ▼  需要执行/无 dump
 启动容器 → 默认 Headless；必要时先淘汰空闲浏览器
     │
     ▼  CDP 连接后灌入 auth-cookies.json，再打开 Profile URL

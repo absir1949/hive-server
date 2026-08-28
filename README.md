@@ -128,7 +128,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `POST` | `/browsers/:id/stop` | 停止当前浏览器会话，保留 Profile 数据 |
 | `POST` | `/browsers/:id/navigate` | 导航 |
 | `POST` | `/browsers/:id/execute` | 执行 JS |
-| `GET` | `/browsers/:id/cookies` | 全量 cookies |
+| `GET` | `/browsers/:id/cookies` | 全量 cookies（停止态返回最近 dump 与 `savedAt`，不冷启动） |
 | `POST` | `/browsers/:id/screenshot` | 截图（base64） |
 | `POST` | `/browsers/:id/pages/new` | 创建共享登录态的最小化后台窗口 |
 | `POST` | `/browsers/:id/pages/:pageId/execute` | 在指定后台采集页执行 JS |
@@ -141,7 +141,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 
 `browserMode` 不属于 Profile。冷启动采集默认使用 Headless；只有需要人工操作时，Electron 客户端调用 `/vnc` 获取租约。VNC 存在时，采集应使用 `/pages/*` 后台窗口；主页导航、旧 `/execute` 脚本和主页全页截图会被拒绝，避免打断人工操作。VNC 租约默认 2 分钟未收到心跳就撤销控制通道，可通过 `VNC_LEASE_TTL_MS` 调整。
 
-登录态靠 `data/{id}/auth-cookies.json` 备份，不靠进程常驻。停止、切 VNC、容量淘汰和保活成功后都会 dump cookie；冷启动先灌回再打开店铺页。微信小店 Headless 恢复后仍是登录页时返回 `401 needsLogin`，VNC 仍会启动方便扫码。并发默认最多 8 个容器（`MAX_RUNNING_BROWSERS`），超出淘汰最久未用且没有 VNC/采集页的浏览器。无 VNC 租约时默认 10 分钟空闲后 dump 并停止（`IDLE_STOP_MS`）。保活只对已运行会话创建后台页，不会拉起停着的 Profile。
+登录态靠 `data/{id}/auth-cookies.json` 备份，不靠进程常驻。停止、切 VNC、容量淘汰和保活成功后都会 dump cookie；冷启动先灌回再打开店铺页。微信小店 Headless 恢复后仍是登录页时返回 `401 needsLogin`，VNC 仍会启动方便扫码。并发默认最多 8 个容器（`MAX_RUNNING_BROWSERS`），超出淘汰最久未用且没有 VNC/采集页的浏览器。无 VNC 租约时默认 10 分钟空闲后 dump 并停止（`IDLE_STOP_MS`）。保活只对已运行会话创建后台页，不会拉起停着的 Profile。`GET /cookies` 对已停止且有 dump 的 Profile 直接返回 dump（响应含 `source: 'dump'` 和 `savedAt`），不为读 cookie 冷启动；dump 不是登录证明，过期与否需调用方用平台接口判断。
 
 Electron 客户端的“运行中”只表示当前有可操作的 VNC 窗口；Headless 采集不会出现在客户端运行列表。VNC 窗口失焦、隐藏或最小化后默认保留 5 分钟，重新回到前台会继续保持；超过宽限时间自动释放 VNC 并关闭窗口。可在本机 `client/config.json` 增加 `vncBackgroundTimeoutMs` 调整该宽限时间。
 
