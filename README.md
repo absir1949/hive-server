@@ -131,6 +131,7 @@ curl -X POST http://localhost:3000/browsers/1/stop
 | `GET` | `/browsers/:id/cookies` | 全量 cookies（停止态返回最近 dump 与 `savedAt`，不冷启动） |
 | `POST` | `/browsers/:id/screenshot` | 截图（base64） |
 | `POST` | `/browsers/:id/pages/new` | 创建共享登录态的最小化后台窗口 |
+| `GET` | `/browsers/:id/pages` | 列出跟踪中的采集页（pageId + URL，用于排障/手动清理） |
 | `POST` | `/browsers/:id/pages/:pageId/execute` | 在指定后台采集页执行 JS |
 | `POST` | `/browsers/:id/pages/:pageId/screenshot` | 截取指定后台采集页 |
 | `POST` | `/browsers/:id/pages/:pageId/close` | 关闭后台窗口并释放 CDP 会话 |

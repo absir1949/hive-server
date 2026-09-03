@@ -74,6 +74,7 @@ POST /browsers/:id/execute          执行 JS
 GET  /browsers/:id/cookies          获取 cookie（浏览器在跑读 CDP；已停止则返回 dump，不冷启动。dump 不是登录证明）
 POST /browsers/:id/screenshot       截图
 POST /browsers/:id/pages/new        创建最小化后台采集窗口
+GET  /browsers/:id/pages            列出跟踪中的采集页（pageId + URL）
 POST /browsers/:id/pages/:pageId/execute    在后台窗口执行 JS
 POST /browsers/:id/pages/:pageId/screenshot 截取后台窗口
 POST /browsers/:id/pages/:pageId/close      关闭后台窗口

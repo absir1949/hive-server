@@ -56,11 +56,15 @@ function getVncSession(profileId, leaseId) {
   const serverHost = new URL(SERVER).hostname;
   const query = leaseId ? `?leaseId=${encodeURIComponent(leaseId)}` : '';
   return api('GET', `/browsers/${profileId}/vnc${query}`).then((result) => {
-    if (!result.ok || !result.url || !result.leaseId) return null;
-    return {
-      ...result,
-      url: result.url.replace(/\/\/[^:\/]+/, `//${serverHost}`),
-    };
+    if (result.ok && result.url && result.leaseId) {
+      return {
+        ...result,
+        url: result.url.replace(/\/\/[^:\/]+/, `//${serverHost}`),
+      };
+    }
+    // Surface the server's reason (e.g. 409 active collection) instead of
+    // swallowing it — a silent null here makes the window just not open.
+    return { error: result.error || `VNC 请求失败（HTTP ${result.status || '未知'}）`, pages: result.pages || null };
   });
 }
 
@@ -175,8 +179,22 @@ async function openVnc(profileId, profileName) {
     return;
   }
 
-  const vncSession = await getVncSession(profileId);
-  if (!vncSession) return;
+  let vncSession;
+  try {
+    vncSession = await getVncSession(profileId);
+  } catch (err) {
+    vncSession = { error: `无法连接服务器 ${SERVER}：${err.message}` };
+  }
+  if (!vncSession || vncSession.error) {
+    const { dialog } = require('electron');
+    dialog.showMessageBox({
+      type: 'warning',
+      title: '无法打开 VNC',
+      message: vncSession?.error || `无法获取 ${profileName || 'Profile ' + profileId} 的 VNC 会话`,
+      buttons: ['确定'],
+    });
+    return;
+  }
   const { url: vncUrl, leaseId } = vncSession;
 
   // Wait for VNC to be ready, retry up to 60s with user feedback

@@ -43,6 +43,43 @@ test('setCookiesMain enables the Network domain then writes the cookie list', as
   assert.equal(ws.closed, true);
 });
 
+test('reconcileCollectionPages prunes tracked pages missing from Chrome and keeps live ones', async () => {
+  const connector = createConnectedConnector();
+  const staleWs = new FakeWebSocket();
+  staleWs.terminated = false;
+  staleWs.terminate = () => { staleWs.terminated = true; };
+  connector._rememberCollectionPage('1', 'stale-1', { ws: staleWs, targetId: 'stale-1', cdpPort: 9317, sessionId: 's1' });
+  connector._rememberCollectionPage('1', 'live-1', { ws: new FakeWebSocket(), targetId: 'live-1', cdpPort: 9317, sessionId: 's2' });
+  connector._cdpGet = async () => [{ id: 'main-1', type: 'page' }, { id: 'live-1', type: 'page' }];
+
+  await connector.reconcileCollectionPages('1');
+
+  assert.deepEqual(connector.collectionPageIds('1'), ['live-1']);
+  assert.equal(staleWs.terminated, true);
+  assert.equal(connector.hasOpenPages('1'), true);
+});
+
+test('reconcileCollectionPages keeps every tracked page when Chrome cannot be queried', async () => {
+  const connector = createConnectedConnector();
+  connector._rememberCollectionPage('1', 'p1', { ws: new FakeWebSocket(), targetId: 'p1', cdpPort: 9317, sessionId: 's1' });
+  connector._cdpGet = async () => { throw new Error('Unexpected server response: 500'); };
+
+  await connector.reconcileCollectionPages('1');
+
+  assert.deepEqual(connector.collectionPageIds('1'), ['p1']);
+});
+
+test('listCollectionPages enriches tracked pages with live URLs when Chrome answers', async () => {
+  const connector = createConnectedConnector();
+  connector._rememberCollectionPage('1', 'p1', { ws: new FakeWebSocket(), targetId: 'p1', cdpPort: 9317, sessionId: 's1' });
+  connector._cdpGet = async () => [{ id: 'p1', type: 'page', url: 'https://store.weixin.qq.com/shop/home' }];
+
+  assert.deepEqual(
+    await connector.listCollectionPages('1'),
+    [{ pageId: 'p1', url: 'https://store.weixin.qq.com/shop/home' }],
+  );
+});
+
 test('collection pages use minimized background windows without taking focus', async () => {
   const connector = createConnectedConnector();
   const ws = new FakeWebSocket();

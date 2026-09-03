@@ -95,9 +95,21 @@ cm.recover().then(async () => {
   } catch (err) {
     console.error('[Capacity] Failed to trim recovered browsers:', err.message);
   }
+  // Recovered browsers must be idle-stop candidates from the start; without
+  // this they survive until the next explicit request touches them.
+  api.armIdleStopTimers();
   app.listen(PORT, () => {
     console.log(`Hive Server listening on port ${PORT}`);
     initKeepAlive();
+    // Cap enforcement must hold against Docker truth, not just cold starts.
+    // Collection pages and VNC leases stay protected; LRU others get dumped
+    // and stopped down to MAX_RUNNING_BROWSERS.
+    const capacitySweep = setInterval(() => {
+      api.enforceRunningCapacity().catch((err) => {
+        console.error('[Capacity] Sweep failed:', err.message);
+      });
+    }, 60 * 1000);
+    capacitySweep.unref();
   });
 });
 

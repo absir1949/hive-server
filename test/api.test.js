@@ -29,6 +29,7 @@ async function startApi({
   const vncAccessEvents = [];
   const restoredCookies = [];
   const navigated = [];
+  const reconciled = [];
   let enableVncCalls = 0;
   const profileList = profiles || [profile];
   const cm = {
@@ -104,6 +105,11 @@ async function startApi({
     async closePage(id, pageId) { pages.get(String(id))?.delete(String(pageId)); },
     async evaluateOnPage() { return true; },
     hasOpenPages(id) { return (pages.get(String(id))?.size || 0) > 0; },
+    collectionPageIds(id) { return [...(pages.get(String(id)) || [])]; },
+    async reconcileCollectionPages(id) { reconciled.push(String(id)); },
+    async listCollectionPages(id) {
+      return this.collectionPageIds(id).map((pageId) => ({ pageId, url: null }));
+    },
   };
   const app = express();
   app.use(express.json());
@@ -111,7 +117,7 @@ async function startApi({
 
   const server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, resolve));
-  return { server, cm, bc, vncAccessEvents, restoredCookies, navigated };
+  return { server, cm, bc, vncAccessEvents, restoredCookies, navigated, reconciled };
 }
 
 async function request(server, path, { method = 'GET', body } = {}) {
@@ -615,6 +621,47 @@ test('GET /cookies prefers live cookies while the browser is running', async () 
     assert.equal(response.status, 200);
     assert.equal(body.source, 'live');
     assert.equal(body.cookies[0].value, 'live');
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('VNC switch is refused with actionable pageIds when a collection page is stuck open', async () => {
+  const authStore = tempAuthStore();
+  const { server, reconciled } = await startApi({ authStore });
+  try {
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    await request(server, '/browsers/1/pages/new', { method: 'POST', body: { url: 'https://store.weixin.qq.com/shop/home' } });
+
+    const response = await request(server, '/browsers/1/vnc');
+    const body = await response.json();
+    assert.equal(response.status, 409);
+    assert.deepEqual(body.pages, ['page-1']);
+    assert.match(body.error, /page-1/);
+    assert.match(body.error, /pages\/\{pageId\}\/close/);
+    // The guard reconciles against Chrome before refusing, so leaked pageIds
+    // cannot block VNC forever.
+    assert.ok(reconciled.includes('1'));
+  } finally {
+    await closeApi(server);
+  }
+});
+
+test('GET /pages lists tracked collection pages and empties for stopped browsers', async () => {
+  const authStore = tempAuthStore();
+  const { server } = await startApi({ authStore });
+  try {
+    const stopped = await request(server, '/browsers/1/pages');
+    assert.deepEqual((await stopped.json()).pages, []);
+
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    await request(server, '/browsers/1/pages/new', { method: 'POST', body: { url: 'https://store.weixin.qq.com/shop/home' } });
+    const running = await request(server, '/browsers/1/pages');
+    assert.deepEqual((await running.json()).pages, [{ pageId: 'page-1', url: null }]);
+
+    await request(server, '/browsers/1/stop', { method: 'POST' });
+    const afterStop = await request(server, '/browsers/1/pages');
+    assert.deepEqual((await afterStop.json()).pages, []);
   } finally {
     await closeApi(server);
   }
