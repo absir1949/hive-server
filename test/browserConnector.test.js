@@ -184,6 +184,73 @@ test('a collection target that closes itself is removed from the registry', () =
   assert.equal(ws.closed, true);
 });
 
+test('evaluate and screenshot refresh collection page activity', async () => {
+  const connector = createConnectedConnector();
+  const ws = new FakeWebSocket();
+  connector._cdpSend = async (_socket, method) => {
+    if (method === 'Runtime.evaluate') return { result: { value: 'ok' } };
+    if (method === 'Page.captureScreenshot') return { data: 'png' };
+    return {};
+  };
+  const page = {
+    ws,
+    targetId: 'live-1',
+    cdpPort: 9317,
+    sessionId: 's1',
+    createdAt: 1,
+    lastActivityAt: 1,
+    targetLifecycleHandler: () => {},
+    connectionErrorHandler: () => {},
+    connectionCloseHandler: () => {},
+  };
+  connector.collectionPages.set('1', new Map([['live-1', page]]));
+
+  await connector.evaluateOnPage('1', 'live-1', '1');
+  assert.ok(page.lastActivityAt > 1);
+  const afterEvaluate = page.lastActivityAt;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await connector.screenshotPage('1', 'live-1');
+  assert.ok(page.lastActivityAt > afterEvaluate);
+});
+
+test('closeIdleCollectionPages closes stale pages and keeps recently active ones', async () => {
+  const connector = createConnectedConnector();
+  connector._cdpCloseTarget = async () => true;
+  const staleWs = new FakeWebSocket();
+  const liveWs = new FakeWebSocket();
+  const stale = {
+    ws: staleWs,
+    targetId: 'stale-1',
+    cdpPort: 9317,
+    sessionId: 's1',
+    createdAt: 1,
+    lastActivityAt: 1,
+    targetLifecycleHandler: () => {},
+    connectionErrorHandler: () => {},
+    connectionCloseHandler: () => {},
+  };
+  const live = {
+    ws: liveWs,
+    targetId: 'live-1',
+    cdpPort: 9317,
+    sessionId: 's2',
+    createdAt: Date.now(),
+    lastActivityAt: Date.now(),
+    targetLifecycleHandler: () => {},
+    connectionErrorHandler: () => {},
+    connectionCloseHandler: () => {},
+  };
+  connector._cdpSend = async () => ({});
+  connector.collectionPages.set('1', new Map([['stale-1', stale], ['live-1', live]]));
+
+  const closed = await connector.closeIdleCollectionPages('1', 1000);
+
+  assert.deepEqual(closed, ['stale-1']);
+  assert.deepEqual(connector.collectionPageIds('1'), ['live-1']);
+  assert.equal(staleWs.closed, true);
+  assert.equal(liveWs.closed, false);
+});
+
 test('disconnect closes collection targets and creator sessions so windows cannot leak', async () => {
   const connector = createConnectedConnector();
   connector._cdpCloseTarget = async () => true;

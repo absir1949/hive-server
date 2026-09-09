@@ -425,6 +425,34 @@ test('VNC release keeps one durable Chrome until an explicit stop', async () => 
   }
 });
 
+test('opening VNC closes idle collection pages then acquires the lease', async () => {
+  const startedModes = [];
+  const { server, bc } = await startApi({
+    onStart: (_, options) => startedModes.push(options.browserMode),
+  });
+  try {
+    await request(server, '/browsers/1/start', { method: 'POST', body: { browserMode: 'headless' } });
+    await request(server, '/browsers/1/pages/new', {
+      method: 'POST',
+      body: { url: 'https://store.weixin.qq.com/shop/home' },
+    });
+    bc.closeIdleCollectionPages = async (id) => {
+      const pid = String(id);
+      const closed = [...(bc.collectionPageIds(pid))];
+      for (const pageId of closed) await bc.closePage(pid, pageId);
+      return closed;
+    };
+
+    const response = await request(server, '/browsers/1/vnc');
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.ok(body.leaseId);
+    assert.deepEqual(startedModes, ['headless', 'vnc']);
+  } finally {
+    await closeApi(server);
+  }
+});
+
 test('opening VNC cannot stop an active Headless collection page', async () => {
   const startedModes = [];
   const stopped = [];
