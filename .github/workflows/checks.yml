@@ -1,0 +1,35 @@
+name: Linux checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-checks-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, with-agent]
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check provisioned Node runtime
+        run: |
+          test "$(/usr/local/bin/node --version)" = 'v22.22.2'
+          echo /usr/local/bin >> "$GITHUB_PATH"
+      - name: Install locked dependencies (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+      - name: Repository isolated checks
+        run: bash scripts/ci/checks.sh
