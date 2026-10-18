@@ -6,7 +6,7 @@ Linux 开发、编译和隔离检查目标为 Ser5（122），runner labels 为 
 
 ## 检查入口
 
-依赖版本：Node 22.22.2；npm ci 使用已提交 package-lock，禁 lifecycle scripts。
+依赖版本：系统预置 `/usr/local/bin/node` 22.22.2（CI 严格核对，不每轮从 GitHub 下载）；npm ci 使用已提交 package-lock，禁 lifecycle scripts。
 
 ```sh
 npm ci --ignore-scripts
